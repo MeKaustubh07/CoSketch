@@ -28,6 +28,7 @@ import { DEFAULT_STYLE } from "@/lib/types";
 import { Toolbar } from "./Toolbar";
 import { StylePanel } from "./StylePanel";
 import { ZoomControls } from "./ZoomControls";
+import { TextEditorOverlay } from "./TextEditorOverlay";
 
 // ─── State management ─────────────────────────────────────────────────────
 
@@ -731,12 +732,12 @@ export function CanvasStage() {
         stateRef.current.appState.viewport
       );
 
-      // Check if double-clicking on an existing text element
       const s = stateRef.current;
       const visibleElements = s.elementOrder
         .map((id) => s.elements.get(id))
         .filter((el): el is CanvasElement => !!el && !el.isDeleted);
 
+      // Check if double-clicking on an existing text element → edit it
       for (let i = visibleElements.length - 1; i >= 0; i--) {
         const el = visibleElements[i];
         if (el.type === "text" && hitTest(el, [cx, cy], s.appState.viewport.zoom)) {
@@ -746,7 +747,40 @@ export function CanvasStage() {
         }
       }
 
-      // Create new text element
+      // Check if double-clicking on a shape → create bound text inside it
+      for (let i = visibleElements.length - 1; i >= 0; i--) {
+        const el = visibleElements[i];
+        if (
+          (el.type === "rectangle" || el.type === "ellipse" || el.type === "diamond") &&
+          hitTest(el, [cx, cy], s.appState.viewport.zoom)
+        ) {
+          const bb = getBoundingBox(el);
+          const textEl = createElement("text", bb.x + 4, bb.y + 4, s.appState.currentStyle);
+          const boundText = {
+            ...textEl,
+            containerId: el.id,
+            textAlign: "center" as const,
+            verticalAlign: "middle" as const,
+            width: bb.width - 8,
+            height: bb.height - 8,
+            autoResize: false,
+          };
+          dispatch({ type: "ADD_ELEMENT", element: boundText as CanvasElement });
+          // Add bound text ref to the shape
+          dispatch({
+            type: "UPDATE_ELEMENT",
+            id: el.id,
+            updates: {
+              boundElements: [...el.boundElements, { id: boundText.id, type: "text" as const }],
+            },
+          });
+          dispatch({ type: "SET_EDITING_TEXT", id: boundText.id });
+          dispatch({ type: "SET_SELECTION", ids: [boundText.id] });
+          return;
+        }
+      }
+
+      // Double-click on empty canvas → create standalone text element
       const el = createElement("text", cx, cy, s.appState.currentStyle);
       dispatch({ type: "ADD_ELEMENT", element: el });
       dispatch({ type: "SET_EDITING_TEXT", id: el.id });
@@ -825,12 +859,12 @@ export function CanvasStage() {
         <TextEditorOverlay
           element={state.elements.get(state.appState.editingTextId) as CanvasElement & { type: "text" }}
           viewport={state.appState.viewport}
-          onCommit={(text: string) => {
+          onCommit={(text: string, width: number, height: number) => {
             const id = state.appState.editingTextId!;
             if (text.trim() === "") {
               dispatch({ type: "DELETE_ELEMENTS", ids: [id] });
             } else {
-              dispatch({ type: "UPDATE_ELEMENT", id, updates: { text } });
+              dispatch({ type: "UPDATE_ELEMENT", id, updates: { text, width, height } });
             }
             dispatch({ type: "SET_EDITING_TEXT", id: null });
           }}
@@ -867,74 +901,7 @@ export function CanvasStage() {
   );
 }
 
-// ─── Text Editor Overlay ──────────────────────────────────────────────────
-
-function TextEditorOverlay({
-  element,
-  viewport,
-  onCommit,
-  onCancel,
-}: {
-  element: CanvasElement & { type: "text" } | undefined;
-  viewport: AppState["viewport"];
-  onCommit: (text: string) => void;
-  onCancel: () => void;
-}) {
-  const divRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (divRef.current) {
-      divRef.current.focus();
-      if (element?.text) {
-        divRef.current.textContent = element.text;
-      }
-    }
-  }, [element?.text]);
-
-  if (!element) return null;
-
-  const FONT_MAP: Record<string, string> = {
-    hand: "'Caveat', cursive",
-    normal: "'Inter', sans-serif",
-    code: "'Fira Code', monospace",
-  };
-
-  const screenX = element.x * viewport.zoom + viewport.scrollX;
-  const screenY = element.y * viewport.zoom + viewport.scrollY;
-
-  return (
-    <div
-      ref={divRef}
-      contentEditable
-      suppressContentEditableWarning
-      className="absolute outline-none z-50"
-      style={{
-        left: screenX,
-        top: screenY,
-        minWidth: Math.max(element.width * viewport.zoom, 40),
-        minHeight: element.fontSize * viewport.zoom * 1.4,
-        fontSize: element.fontSize * viewport.zoom,
-        fontFamily: FONT_MAP[element.fontFamily] || FONT_MAP.hand,
-        color: element.strokeColor,
-        lineHeight: 1.4,
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-word",
-        caretColor: element.strokeColor,
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          e.preventDefault();
-          onCancel();
-        }
-        e.stopPropagation();
-      }}
-      onBlur={() => {
-        const text = divRef.current?.textContent || "";
-        onCommit(text);
-      }}
-    />
-  );
-}
+// Inline TextEditorOverlay removed — now imported from ./TextEditorOverlay
 
 // ─── Cursor helper ────────────────────────────────────────────────────────
 
