@@ -4,7 +4,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
 const liveblocks = new Liveblocks({
-  secret: process.env.LIVEBLOCKS_SECRET_KEY!,
+  secret: process.env.LIVEBLOCKS_SECRET_KEY || "sk_test_placeholder_key_for_builds_only",
 });
 
 // Deterministic color from user id
