@@ -29,6 +29,9 @@ import { Toolbar } from "./Toolbar";
 import { StylePanel } from "./StylePanel";
 import { ZoomControls } from "./ZoomControls";
 import { TextEditorOverlay } from "./TextEditorOverlay";
+import { ExportMenu } from "./ExportMenu";
+import { downloadPNG, downloadJSON, parseCoSketchFile } from "@/lib/export";
+import type { CanvasElement as CanvasElementType } from "@/lib/types";
 
 // ─── State management ─────────────────────────────────────────────────────
 
@@ -978,6 +981,40 @@ export function CanvasStage() {
       <ZoomControls
         zoom={state.appState.viewport.zoom}
         onZoomChange={handleZoomChange}
+      />
+
+      <ExportMenu
+        onExportPNG={() => {
+          const canvas = canvasRef.current;
+          if (canvas) {
+            downloadPNG(
+              canvas,
+              stateRef.current.elements,
+              stateRef.current.elementOrder,
+              stateRef.current.appState.viewport
+            );
+          }
+        }}
+        onExportJSON={() => {
+          downloadJSON(
+            stateRef.current.elements,
+            stateRef.current.elementOrder
+          );
+        }}
+        onImportJSON={(file: File) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const text = e.target?.result as string;
+            const parsed = parseCoSketchFile(text);
+            if (parsed) {
+              dispatch({ type: "SNAPSHOT" });
+              for (const el of parsed.elements) {
+                dispatch({ type: "ADD_ELEMENT", element: el as CanvasElementType });
+              }
+            }
+          };
+          reader.readAsText(file);
+        }}
       />
     </div>
   );
