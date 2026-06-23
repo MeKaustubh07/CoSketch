@@ -32,10 +32,17 @@ import { TextEditorOverlay } from "./TextEditorOverlay";
 
 // ─── State management ─────────────────────────────────────────────────────
 
+interface HistoryEntry {
+  elements: Map<string, CanvasElement>;
+  elementOrder: string[];
+}
+
 interface CanvasState {
   elements: Map<string, CanvasElement>;
   elementOrder: string[];
   appState: AppState;
+  undoStack: HistoryEntry[];
+  redoStack: HistoryEntry[];
 }
 
 type CanvasAction =
@@ -50,10 +57,61 @@ type CanvasAction =
   | { type: "SET_STYLE"; style: Partial<AppState["currentStyle"]> }
   | { type: "REORDER"; id: string; direction: "front" | "back" | "forward" | "backward" }
   | { type: "DUPLICATE"; ids: string[] }
-  | { type: "SET_ELEMENT_ORDER"; order: string[] };
+  | { type: "SET_ELEMENT_ORDER"; order: string[] }
+  | { type: "UNDO" }
+  | { type: "REDO" }
+  | { type: "SNAPSHOT" };
+
+const MAX_HISTORY = 50;
+
+function pushHistory(state: CanvasState): CanvasState {
+  const entry: HistoryEntry = {
+    elements: new Map(state.elements),
+    elementOrder: [...state.elementOrder],
+  };
+  const undoStack = [...state.undoStack, entry].slice(-MAX_HISTORY);
+  return { ...state, undoStack, redoStack: [] };
+}
 
 function canvasReducer(state: CanvasState, action: CanvasAction): CanvasState {
   switch (action.type) {
+    case "SNAPSHOT":
+      return pushHistory(state);
+
+    case "UNDO": {
+      if (state.undoStack.length === 0) return state;
+      const prev = state.undoStack[state.undoStack.length - 1];
+      const redoEntry: HistoryEntry = {
+        elements: new Map(state.elements),
+        elementOrder: [...state.elementOrder],
+      };
+      return {
+        ...state,
+        elements: prev.elements,
+        elementOrder: prev.elementOrder,
+        undoStack: state.undoStack.slice(0, -1),
+        redoStack: [...state.redoStack, redoEntry],
+        appState: { ...state.appState, selectedIds: [] },
+      };
+    }
+
+    case "REDO": {
+      if (state.redoStack.length === 0) return state;
+      const next = state.redoStack[state.redoStack.length - 1];
+      const undoEntry: HistoryEntry = {
+        elements: new Map(state.elements),
+        elementOrder: [...state.elementOrder],
+      };
+      return {
+        ...state,
+        elements: next.elements,
+        elementOrder: next.elementOrder,
+        undoStack: [...state.undoStack, undoEntry],
+        redoStack: state.redoStack.slice(0, -1),
+        appState: { ...state.appState, selectedIds: [] },
+      };
+    }
+
     case "SET_TOOL":
       return {
         ...state,
@@ -175,6 +233,8 @@ const initialState: CanvasState = {
     dragState: null,
     currentStyle: { ...DEFAULT_STYLE },
   },
+  undoStack: [],
+  redoStack: [],
 };
 
 // ─── CanvasStage component ────────────────────────────────────────────────
@@ -401,6 +461,7 @@ export function CanvasStage() {
 
         for (let i = visibleElements.length - 1; i >= 0; i--) {
           if (hitTest(visibleElements[i], [cx, cy], s.appState.viewport.zoom)) {
+            dispatch({ type: "SNAPSHOT" });
             dispatch({ type: "DELETE_ELEMENTS", ids: [visibleElements[i].id] });
             break;
           }
@@ -411,6 +472,7 @@ export function CanvasStage() {
       // Drawing tools
       const elementType = toolToElementType(tool);
       if (elementType && elementType !== "text") {
+        dispatch({ type: "SNAPSHOT" });
         const el = createElement(elementType, cx, cy, s.appState.currentStyle);
         dispatch({ type: "ADD_ELEMENT", element: el });
         drawingElementIdRef.current = el.id;
@@ -429,6 +491,7 @@ export function CanvasStage() {
 
       // Text tool — handled in double-click
       if (tool === "text") {
+        dispatch({ type: "SNAPSHOT" });
         const el = createElement("text", cx, cy, s.appState.currentStyle);
         dispatch({ type: "ADD_ELEMENT", element: el });
         dispatch({ type: "SET_EDITING_TEXT", id: el.id });
@@ -686,7 +749,25 @@ export function CanvasStage() {
       // Delete
       if ((e.key === "Delete" || e.key === "Backspace") && s.appState.selectedIds.length > 0) {
         e.preventDefault();
+        dispatch({ type: "SNAPSHOT" });
         dispatch({ type: "DELETE_ELEMENTS", ids: s.appState.selectedIds });
+        return;
+      }
+
+      // Ctrl+Z — Undo
+      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        dispatch({ type: "UNDO" });
+        return;
+      }
+
+      // Ctrl+Shift+Z or Ctrl+Y — Redo
+      if (
+        ((e.ctrlKey || e.metaKey) && e.key === "z" && e.shiftKey) ||
+        ((e.ctrlKey || e.metaKey) && e.key === "y")
+      ) {
+        e.preventDefault();
+        dispatch({ type: "REDO" });
         return;
       }
 
@@ -694,6 +775,7 @@ export function CanvasStage() {
       if ((e.ctrlKey || e.metaKey) && e.key === "d") {
         e.preventDefault();
         if (s.appState.selectedIds.length > 0) {
+          dispatch({ type: "SNAPSHOT" });
           dispatch({ type: "DUPLICATE", ids: s.appState.selectedIds });
         }
         return;
