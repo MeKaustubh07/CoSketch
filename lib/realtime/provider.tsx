@@ -106,8 +106,8 @@ export function RealtimeProvider({
       onOp: (msg) => {
         store.applyRemoteOp(msg);
       },
-      onAck: (msg) => {
-        store.handleAck(msg);
+      onAck: () => {
+        store.handleAck();
       },
       onPresence: (msg) => {
         store.updatePeerPresence(msg.actorId, msg.presence);
