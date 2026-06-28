@@ -2,14 +2,14 @@
  * roomToken.ts — server-only signed room-access token.
  *
  * Verifying the room password once mints a short-lived HMAC token that is
- * stored in an httpOnly cookie. Re-auth (Liveblocks reconnects) then proves
+ * stored in an httpOnly cookie. Re-auth (WS reconnects) then proves
  * access via that cookie instead of re-sending the password — so the password
  * never has to live in client-readable storage.
  */
 
 import { createHmac, timingSafeEqual } from "crypto";
 
-const SECRET = process.env.NEXTAUTH_SECRET || "dev-insecure-room-token-secret";
+const SECRET = process.env.WS_TICKET_SECRET || "dev-insecure-room-token-secret";
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
 export const roomCookieName = (roomId: string) => `cosketch_room_${roomId}`;

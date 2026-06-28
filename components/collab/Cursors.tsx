@@ -1,18 +1,18 @@
 "use client";
 
-import { useOthers, useSelf } from "@liveblocks/react/suspense";
+import { useOtherUsers, useSelfUser } from "@/lib/realtime/provider";
 
 /**
  * Inline avatar cluster shown in the board's top bar.
  * Live pointer cursors are rendered inside CanvasStage (it owns the viewport).
  */
 export function AvatarStack() {
-  const self = useSelf();
-  const others = useOthers();
+  const self = useSelfUser();
+  const others = useOtherUsers();
 
   const users = [
-    ...(self ? [{ id: self.id, info: self.info, isSelf: true }] : []),
-    ...others.map((o) => ({ id: o.id, info: o.info, isSelf: false })),
+    ...(self ? [{ id: self.actorId, name: self.name, color: self.color, isSelf: true }] : []),
+    ...others.map((o) => ({ id: o.actorId, name: o.presence.name, color: o.presence.color, isSelf: false })),
   ];
 
   if (users.length === 0) return null;
@@ -23,10 +23,10 @@ export function AvatarStack() {
         <div
           key={user.id ?? i}
           className="w-8 h-8 rounded-full border-2 border-white flex items-center justify-center text-xs font-bold text-white shadow-sm"
-          style={{ backgroundColor: user.info?.color || "#6965db" }}
-          title={`${user.info?.name || "Guest"}${user.isSelf ? " (you)" : ""}`}
+          style={{ backgroundColor: user.color || "#6965db" }}
+          title={`${user.name || "Guest"}${user.isSelf ? " (you)" : ""}`}
         >
-          {user.info?.name?.charAt(0)?.toUpperCase() || "?"}
+          {user.name?.charAt(0)?.toUpperCase() || "?"}
         </div>
       ))}
       {users.length > 5 && (

@@ -1,5 +1,6 @@
 // CoSketch — Prisma schema (no auth)
-// Board: room metadata — canvas content lives in Liveblocks
+// Board: room metadata + scene snapshot. Canvas content synced via WebSocket,
+// persisted here as a JSON blob.
 
 generator client {
   provider = "prisma-client-js"
@@ -11,12 +12,14 @@ datasource db {
 }
 
 model Board {
-  id   String @id // nanoid — also serves as Liveblocks room ID
-  name String @default("Untitled")
-
-  // scrypt hash of the room password: "<salt>:<hash>"
+  id           String   @id // nanoid — also serves as WS room ID
+  name         String   @default("Untitled")
   joinPassword String
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // Full scene snapshot: { elements: { [id]: CanvasElement }, elementOrder: string[] }
+  // Loaded into memory by the WS server on first join; saved back on change.
+  scene        Json     @default("{\"elements\":{},\"elementOrder\":[]}")
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 }

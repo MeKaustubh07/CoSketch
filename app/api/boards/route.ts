@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Password is required" }, { status: 400 });
   }
 
-  // 8-char nanoid for board ID (also the Liveblocks room ID)
+  // 8-char nanoid for board ID (also the WS room ID)
   const boardId = nanoid(8);
 
   const board = await prisma.board.create({

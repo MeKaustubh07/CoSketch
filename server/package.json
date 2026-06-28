@@ -1,0 +1,19 @@
+{
+  "name": "cosketch-ws-server",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch index.ts",
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "nanoid": "^5.1.15",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.14",
+    "tsx": "^4.19.4",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,16 +1,17 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { CanvasStage } from "@/components/canvas/CanvasStage";
 import { SharePanel } from "@/components/collab/SharePanel";
-import { RoomProviderWrapper } from "@/components/collab/RoomProviderWrapper";
+import { RealtimeProvider } from "@/lib/realtime/provider";
 import { AvatarStack } from "@/components/collab/Cursors";
 import {
   getStoredName,
   setStoredName,
   isRoomAuthed,
   markRoomAuthed,
+  clearRoomAuthed,
   setRoomPassword,
 } from "@/lib/user";
 
@@ -27,6 +28,11 @@ export default function BoardPage() {
     setResolved(true);
   }, [boardId]);
 
+  const handleAuthFailed = useCallback(() => {
+    clearRoomAuthed(boardId);
+    setName(null);
+  }, [boardId]);
+
   if (!resolved) return null;
 
   if (!name) {
@@ -34,9 +40,9 @@ export default function BoardPage() {
   }
 
   return (
-    <RoomProviderWrapper roomId={boardId} userName={name}>
+    <RealtimeProvider roomId={boardId} userName={name} onAuthFailed={handleAuthFailed}>
       <BoardRoom boardId={boardId} />
-    </RoomProviderWrapper>
+    </RealtimeProvider>
   );
 }
 

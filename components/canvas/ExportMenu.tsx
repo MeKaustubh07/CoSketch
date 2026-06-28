@@ -8,7 +8,7 @@ interface ExportMenuProps {
 
 export const ExportMenu = memo(function ExportMenu({ onExportPNG }: ExportMenuProps) {
   return (
-    <div className="absolute bottom-16 right-3 z-40">
+    <div className="absolute bottom-3 right-3 z-40">
       <button
         onClick={onExportPNG}
         className="island flex items-center gap-2 px-3 py-2 text-gray-500 hover:text-gray-800 transition-colors text-sm"

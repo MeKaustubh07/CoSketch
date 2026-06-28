@@ -1,14 +1,6 @@
 "use client";
 
 import { useRef, useEffect, useCallback, useReducer } from "react";
-import {
-  useStorage,
-  useMutation,
-  useHistory,
-  useUpdateMyPresence,
-  useOthers,
-} from "@liveblocks/react/suspense";
-import { LiveObject } from "@liveblocks/client";
 import { RoughRenderer } from "@/lib/rough-renderer";
 import {
   createElement,
@@ -40,8 +32,9 @@ import { ZoomControls } from "./ZoomControls";
 import { TextEditorOverlay } from "./TextEditorOverlay";
 import { ExportMenu } from "./ExportMenu";
 import { downloadPNG } from "@/lib/export";
+import { useRealtimeActions, useOtherUsers } from "@/lib/realtime/provider";
 
-// ─── Local UI state (everything per-user; shared scene lives in Liveblocks) ─
+// ─── Local UI state (everything per-user; shared scene lives in WS store) ───
 
 type AppAction =
   | { type: "SET_TOOL"; tool: ToolName }
@@ -87,19 +80,11 @@ export function CanvasStage() {
   const rendererRef = useRef<RoughRenderer | null>(null);
   const [ui, dispatch] = useReducer(uiReducer, initialUI);
 
-  // ─── Shared scene (Liveblocks storage) ──────────────────────────────────
-  // useStorage snapshots: LiveList → array; LiveMap → plain object (keyed by id)
-  // in this Liveblocks version. Access via the shapeEntries/shapeGet helpers so
-  // either a Map or an object works.
-  const shapes = useStorage((root) => root.shapes) as unknown;
-  const order = useStorage((root) => root.elementOrder) as unknown as readonly string[];
-  const history = useHistory();
-  const updateMyPresence = useUpdateMyPresence();
-  const others = useOthers();
+  // ─── Shared scene (custom WS store) ─────────────────────────────────────
+  const { store, sendUpsert, sendDelete, sendReorder, sendPresence } = useRealtimeActions();
+  const others = useOtherUsers();
 
   // Refs kept fresh for the imperative rAF render loop + event handlers.
-  const shapesRef = useRef(shapes);
-  const orderRef = useRef(order);
   const uiRef = useRef(ui);
   const dragRef = useRef<DragState | null>(null);
   const overrideRef = useRef<Map<string, CanvasElement>>(new Map());
@@ -107,80 +92,31 @@ export function CanvasStage() {
   const lastPresenceRef = useRef(0);
   const dirtyRef = useRef(true);
 
-  shapesRef.current = shapes;
-  orderRef.current = order;
   uiRef.current = ui;
+
+  // Mark dirty when store or UI changes
+  useEffect(() => {
+    const unsub = store.subscribe(() => {
+      dirtyRef.current = true;
+    });
+    return unsub;
+  }, [store]);
 
   useEffect(() => {
     dirtyRef.current = true;
-  }, [shapes, order, ui]);
+  }, [ui]);
 
-  // ─── Mutations ──────────────────────────────────────────────────────────
-
-  const addElement = useMutation(({ storage }, el: CanvasElement) => {
-    storage.get("shapes").set(el.id, new LiveObject(el as never));
-    storage.get("elementOrder").push(el.id);
-  }, []);
-
-  const addMany = useMutation(({ storage }, els: CanvasElement[]) => {
-    const s = storage.get("shapes");
-    const list = storage.get("elementOrder");
-    for (const el of els) {
-      s.set(el.id, new LiveObject(el as never));
-      list.push(el.id);
-    }
-  }, []);
-
-  const commitPatches = useMutation(
-    ({ storage }, patches: Array<[string, Partial<CanvasElement>]>) => {
-      const s = storage.get("shapes");
-      for (const [id, up] of patches) {
-        const lo = s.get(id);
-        if (lo) lo.update(up as never);
-      }
-    },
-    []
-  );
-
-  const removeElements = useMutation(({ storage }, ids: string[]) => {
-    const s = storage.get("shapes");
-    const list = storage.get("elementOrder");
-    const set = new Set(ids);
-    for (let i = list.length - 1; i >= 0; i--) {
-      const v = list.get(i);
-      if (v && set.has(v)) list.delete(i);
-    }
-    for (const id of ids) s.delete(id);
-  }, []);
-
-  const reorder = useMutation(
-    ({ storage }, id: string, direction: "front" | "back" | "forward" | "backward") => {
-      const list = storage.get("elementOrder");
-      const idx = list.indexOf(id);
-      if (idx === -1) return;
-      const len = list.length;
-      let target = idx;
-      if (direction === "front") target = len - 1;
-      else if (direction === "back") target = 0;
-      else if (direction === "forward") target = Math.min(len - 1, idx + 1);
-      else if (direction === "backward") target = Math.max(0, idx - 1);
-      if (target !== idx) list.move(idx, target);
-    },
-    []
-  );
-
-  // ─── Element access (merge storage snapshot + in-flight overrides) ───────
+  // ─── Element access (merge store + in-flight overrides) ─────────────────
 
   const currentElements = useCallback((): Map<string, CanvasElement> => {
-    const m = new Map<string, CanvasElement>();
-    for (const [k, v] of shapeEntries(shapesRef.current)) m.set(k, v);
+    const m = new Map(store.getElements());
     for (const [k, v] of overrideRef.current) m.set(k, v);
     return m;
-  }, []);
+  }, [store]);
 
   const currentOrder = useCallback(
-    (): string[] => (orderRef.current ? [...orderRef.current] : []),
-    []
+    (): string[] => [...store.getElementOrder()],
+    [store]
   );
 
   const visibleInZOrder = useCallback((): CanvasElement[] => {
@@ -190,15 +126,61 @@ export function CanvasStage() {
       .filter((el): el is CanvasElement => !!el && !el.isDeleted);
   }, [currentElements, currentOrder]);
 
-  // Flush in-flight overrides to storage (throttled during drag).
+  // Flush in-flight overrides — sends WS ops for each overridden element.
   const flushOverrides = useCallback(() => {
     const ov = overrideRef.current;
     if (ov.size === 0) return;
-    const patches: Array<[string, Partial<CanvasElement>]> = [];
-    for (const [id, el] of ov) patches.push([id, el]);
-    commitPatches(patches);
+    for (const [, el] of ov) {
+      sendUpsert(el);
+    }
     lastFlushRef.current = performance.now();
-  }, [commitPatches]);
+  }, [sendUpsert]);
+
+  // Patch elements locally + send ops
+  const commitPatches = useCallback(
+    (patches: Array<[string, Partial<CanvasElement>]>) => {
+      for (const [id, patch] of patches) {
+        const el = store.getElement(id) ?? overrideRef.current.get(id);
+        if (el) {
+          const updated = { ...el, ...patch, version: el.version + 1 } as CanvasElement;
+          sendUpsert(updated);
+        }
+      }
+    },
+    [store, sendUpsert]
+  );
+
+  // Add element to store + send op
+  const addElement = useCallback(
+    (el: CanvasElement) => {
+      sendUpsert(el);
+    },
+    [sendUpsert]
+  );
+
+  // Add many elements
+  const addMany = useCallback(
+    (els: CanvasElement[]) => {
+      for (const el of els) sendUpsert(el);
+    },
+    [sendUpsert]
+  );
+
+  // Remove elements
+  const removeElements = useCallback(
+    (ids: string[]) => {
+      for (const id of ids) sendDelete(id);
+    },
+    [sendDelete]
+  );
+
+  // Reorder
+  const reorder = useCallback(
+    (id: string, direction: "front" | "back" | "forward" | "backward") => {
+      sendReorder(id, direction);
+    },
+    [sendReorder]
+  );
 
   const setOverride = useCallback((el: CanvasElement) => {
     overrideRef.current.set(el.id, el);
@@ -234,9 +216,15 @@ export function CanvasStage() {
 
         if (ctx) {
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+          // Build elements map with overrides for rendering
+          const els = new Map(store.getElements());
+          for (const [k, v] of overrideRef.current) els.set(k, v);
+          const order = store.getElementOrder();
+
           rendererRef.current.render(
-            currentElements(),
-            currentOrder(),
+            els,
+            order,
             ui.viewport,
             ui.selectedIds,
             ui.editingTextId,
@@ -270,7 +258,7 @@ export function CanvasStage() {
       cancelAnimationFrame(rafId);
       observer.disconnect();
     };
-  }, [currentElements, currentOrder]);
+  }, [store]);
 
   // ─── Coordinate helpers ──────────────────────────────────────────────────
 
@@ -294,7 +282,7 @@ export function CanvasStage() {
       try {
         canvas.setPointerCapture(e.pointerId);
       } catch {
-        // Pointer may not be capturable (e.g. synthetic events) — non-fatal.
+        // Pointer may not be capturable — non-fatal.
       }
 
       const ui = uiRef.current;
@@ -316,7 +304,6 @@ export function CanvasStage() {
           if (sel && !sel.isDeleted) {
             const handle = getHitHandle([cx, cy], sel, ui.viewport.zoom);
             if (handle) {
-              history.pause();
               dragRef.current = {
                 type: handle.type === "rotate" ? "rotate" : "resize",
                 startX: cx,
@@ -355,7 +342,6 @@ export function CanvasStage() {
           } else if (!already) {
             dispatch({ type: "SET_SELECTION", ids: [hit.id] });
           }
-          history.pause();
           dragRef.current = { type: "move", startX: cx, startY: cy, currentX: cx, currentY: cy };
         } else {
           dispatch({ type: "SET_SELECTION", ids: [] });
@@ -380,8 +366,10 @@ export function CanvasStage() {
       if (tool === "text") {
         const el = createTextAt(cx, cy, ui.currentStyle);
         addElement(el);
-        dispatch({ type: "SET_EDITING_TEXT", id: el.id });
+        // Return to selection so the text can be moved/edited right after.
+        dispatch({ type: "SET_TOOL", tool: "selection" });
         dispatch({ type: "SET_SELECTION", ids: [el.id] });
+        dispatch({ type: "SET_EDITING_TEXT", id: el.id });
         return;
       }
 
@@ -389,7 +377,6 @@ export function CanvasStage() {
       const elementType = toolToElementType(tool);
       if (elementType && elementType !== "text") {
         const el = createElement(elementType, cx, cy, ui.currentStyle);
-        history.pause();
         addElement(el);
         setOverride(el);
         dragRef.current = {
@@ -402,7 +389,7 @@ export function CanvasStage() {
         };
       }
     },
-    [getCanvasPoint, getScreenPoint, currentElements, currentOrder, history, addElement, removeElements, setOverride]
+    [getCanvasPoint, getScreenPoint, currentElements, currentOrder, addElement, removeElements, setOverride]
   );
 
   // ─── Pointer move ─────────────────────────────────────────────────────────
@@ -413,20 +400,19 @@ export function CanvasStage() {
       const [cx, cy] = getCanvasPoint(e);
       const [sx, sy] = getScreenPoint(e);
 
-      // Broadcast cursor (canvas coords), throttled — doesn't affect local render.
+      // Broadcast cursor (canvas coords), throttled.
       const now = performance.now();
       if (now - lastPresenceRef.current > 40) {
-        updateMyPresence({ cursor: { x: cx, y: cy } });
+        sendPresence({ cursor: { x: cx, y: cy }, name: "", color: "" });
         lastPresenceRef.current = now;
       }
 
       const drag = dragRef.current;
       if (!drag) return;
 
-      // Per-element lookup — avoid rebuilding the whole scene map on every
-      // pointer event (was the source of drag lag as the canvas filled up).
+      // Per-element lookup
       const getEl = (id: string): CanvasElement | undefined =>
-        overrideRef.current.get(id) ?? shapeGet(shapesRef.current, id);
+        overrideRef.current.get(id) ?? store.getElement(id);
 
       switch (drag.type) {
         case "pan": {
@@ -515,7 +501,7 @@ export function CanvasStage() {
         if (performance.now() - lastFlushRef.current > FLUSH_MS) flushOverrides();
       }
     },
-    [getCanvasPoint, getScreenPoint, updateMyPresence, setOverride, flushOverrides]
+    [getCanvasPoint, getScreenPoint, sendPresence, store, setOverride, flushOverrides]
   );
 
   // ─── Pointer up ───────────────────────────────────────────────────────────
@@ -562,7 +548,6 @@ export function CanvasStage() {
         }
       }
       overrideRef.current.clear();
-      history.resume();
       dirtyRef.current = true;
       return;
     }
@@ -571,14 +556,13 @@ export function CanvasStage() {
     if (drag) {
       flushOverrides();
       overrideRef.current.clear();
-      history.resume();
       dirtyRef.current = true;
     }
-  }, [visibleInZOrder, flushOverrides, removeElements, history]);
+  }, [visibleInZOrder, flushOverrides, removeElements]);
 
   const handlePointerLeave = useCallback(() => {
-    updateMyPresence({ cursor: null });
-  }, [updateMyPresence]);
+    sendPresence({ cursor: null, name: "", color: "" });
+  }, [sendPresence]);
 
   // ─── Wheel (zoom + pan) ────────────────────────────────────────────────────
 
@@ -638,16 +622,6 @@ export function CanvasStage() {
         dispatch({ type: "SET_SELECTION", ids: [] });
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
-        e.preventDefault();
-        history.undo();
-        return;
-      }
-      if (((e.ctrlKey || e.metaKey) && e.key === "z" && e.shiftKey) || ((e.ctrlKey || e.metaKey) && e.key === "y")) {
-        e.preventDefault();
-        history.redo();
-        return;
-      }
       if ((e.ctrlKey || e.metaKey) && e.key === "d") {
         e.preventDefault();
         if (ui.selectedIds.length > 0) duplicateSelected(ui.selectedIds);
@@ -667,7 +641,7 @@ export function CanvasStage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [history, removeElements, visibleInZOrder]);
+  }, [removeElements, visibleInZOrder]);
 
   const duplicateSelected = useCallback(
     (ids: string[]) => {
@@ -704,8 +678,9 @@ export function CanvasStage() {
 
       const el = createTextAt(cx, cy, ui.currentStyle);
       addElement(el);
-      dispatch({ type: "SET_EDITING_TEXT", id: el.id });
+      dispatch({ type: "SET_TOOL", tool: "selection" });
       dispatch({ type: "SET_SELECTION", ids: [el.id] });
+      dispatch({ type: "SET_EDITING_TEXT", id: el.id });
     },
     [visibleInZOrder, addElement]
   );
@@ -751,9 +726,9 @@ export function CanvasStage() {
     });
   }, []);
 
-  // ─── Derived selection info (single-element lookups, no full-map rebuild) ───
+  // ─── Derived selection info ────────────────────────────────────────────────
   const lookup = (id: string): CanvasElement | undefined =>
-    overrideRef.current.get(id) ?? shapeGet(shapes, id);
+    overrideRef.current.get(id) ?? store.getElement(id);
   const selectionHasText = ui.selectedIds.some((id) => lookup(id)?.type === "text");
   const selectionHasLinear = ui.selectedIds.some((id) => {
     const t = lookup(id)?.type;
@@ -783,29 +758,29 @@ export function CanvasStage() {
       />
 
       {/* Live collaborator cursors */}
-      {others.map(({ connectionId, presence, info }) => {
-        if (!presence.cursor) return null;
-        const x = presence.cursor.x * ui.viewport.zoom + ui.viewport.scrollX;
-        const y = presence.cursor.y * ui.viewport.zoom + ui.viewport.scrollY;
+      {others.map((peer) => {
+        if (!peer.presence.cursor) return null;
+        const x = peer.presence.cursor.x * ui.viewport.zoom + ui.viewport.scrollX;
+        const y = peer.presence.cursor.y * ui.viewport.zoom + ui.viewport.scrollY;
         return (
           <div
-            key={connectionId}
+            key={peer.actorId}
             className="pointer-events-none absolute z-30 will-change-transform"
             style={{ transform: `translate(${x}px, ${y}px)` }}
           >
             <svg width="20" height="28" viewBox="0 0 24 36" fill="none" className="drop-shadow">
               <path
                 d="M5.65 12.37H5.46l-.14.13L.5 16.88V1.2l11.28 11.17H5.65Z"
-                fill={info?.color || "#6965db"}
+                fill={peer.presence.color || "#6965db"}
                 stroke="white"
                 strokeWidth="1.5"
               />
             </svg>
             <div
               className="absolute left-4 top-3 px-1.5 py-0.5 rounded text-[11px] text-white font-medium whitespace-nowrap shadow"
-              style={{ backgroundColor: info?.color || "#6965db" }}
+              style={{ backgroundColor: peer.presence.color || "#6965db" }}
             >
-              {info?.name || "Guest"}
+              {peer.presence.name || "Guest"}
             </div>
           </div>
         );
@@ -861,23 +836,8 @@ export function CanvasStage() {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// Liveblocks LiveMap snapshots may be a Map or a plain object depending on
-// version — read through these so both shapes work.
-function shapeEntries(base: unknown): [string, CanvasElement][] {
-  if (!base) return [];
-  if (base instanceof Map) return Array.from(base.entries()) as [string, CanvasElement][];
-  return Object.entries(base as Record<string, CanvasElement>);
-}
-
-function shapeGet(base: unknown, id: string): CanvasElement | undefined {
-  if (!base) return undefined;
-  if (base instanceof Map) return base.get(id) as CanvasElement | undefined;
-  return (base as Record<string, CanvasElement>)[id];
-}
-
 function createTextAt(x: number, y: number, style: AppState["currentStyle"]): TextElement {
   const el = createElement("text", x, y, style) as TextElement;
-  // Anchor so the caret sits where the user clicked.
   el.y = y - el.fontSize / 2;
   return el;
 }

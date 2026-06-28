@@ -4,14 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "dev:ws": "cd server && npm run dev",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
-    "@liveblocks/client": "^3.20.0",
-    "@liveblocks/node": "^3.20.0",
-    "@liveblocks/react": "^3.20.0",
     "@prisma/client": "^5.22.0",
     "nanoid": "^5.1.15",
     "next": "16.2.9",
