@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { getStoredName, setStoredName, markRoomAuthed } from "@/lib/user";
+import { getStoredName, setStoredName, markRoomAuthed, setRoomPassword } from "@/lib/user";
 
 export default function HomePage() {
   const router = useRouter();
@@ -39,6 +39,7 @@ export default function HomePage() {
       const { board } = await res.json();
       setStoredName(name);
       markRoomAuthed(board.id);
+      setRoomPassword(board.id, password.trim());
       router.push(`/board/${board.id}`);
     } catch {
       setError("Something went wrong");
@@ -68,6 +69,7 @@ export default function HomePage() {
       }
       setStoredName(name);
       markRoomAuthed(roomId.trim());
+      setRoomPassword(roomId.trim(), password.trim());
       router.push(`/board/${roomId.trim()}`);
     } catch {
       setError("Something went wrong");
@@ -154,7 +156,7 @@ export default function HomePage() {
                   onChange={(e) => setRoomId(e.target.value)}
                   placeholder="Enter the room ID"
                   required
-                  className={`${inputCls} font-mono`}
+                  className={inputCls}
                 />
               </Field>
             )}

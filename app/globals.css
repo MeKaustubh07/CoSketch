@@ -21,6 +21,11 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Professional UI font everywhere; Caveat is reserved for the CoSketch logo. */
+body {
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+}
+
 ::selection {
   background-color: rgba(105, 101, 219, 0.2);
 }

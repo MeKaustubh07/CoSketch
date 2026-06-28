@@ -11,6 +11,7 @@ import {
   setStoredName,
   isRoomAuthed,
   markRoomAuthed,
+  setRoomPassword,
 } from "@/lib/user";
 
 export default function BoardPage() {
@@ -76,6 +77,7 @@ function AccessGate({
       }
       setStoredName(name);
       markRoomAuthed(boardId);
+      setRoomPassword(boardId, password.trim());
       onEnter(name.trim());
     } catch {
       setError("Something went wrong");
@@ -99,9 +101,7 @@ function AccessGate({
             <path d="M2 2l7.586 7.586" />
             <circle cx="11" cy="11" r="2" />
           </svg>
-          <h1 className="text-2xl text-[#6965db]" style={{ fontFamily: "var(--font-caveat), cursive" }}>
-            Join the canvas
-          </h1>
+          <h1 className="text-lg font-semibold text-gray-900">Join the canvas</h1>
           <p className="text-sm text-gray-500 mt-1">Enter your name and the room password</p>
         </div>
         <form onSubmit={submit} className="space-y-3">

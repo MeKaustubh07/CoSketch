@@ -34,3 +34,18 @@ export function clearRoomAuthed(id: string): void {
   if (typeof window === "undefined") return;
   sessionStorage.removeItem(roomKey(id));
 }
+
+// Display-only copy of the room password for the Share panel (so members can
+// hand it to others). NOT used for auth — that's the httpOnly cookie. Lives
+// only in this session.
+const pwKey = (id: string) => `cosketch-pw-${id}`;
+
+export function getRoomPassword(id: string): string {
+  if (typeof window === "undefined") return "";
+  return sessionStorage.getItem(pwKey(id)) ?? "";
+}
+
+export function setRoomPassword(id: string, pw: string): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.setItem(pwKey(id), pw);
+}
