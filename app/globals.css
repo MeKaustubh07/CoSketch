@@ -1,21 +1,39 @@
 @import "tailwindcss";
 
 :root {
-  --color-brand: #6366f1;
-  --color-brand-light: #818cf8;
-  --color-brand-dark: #4f46e5;
+  --island-bg: #ffffff;
+  --island-border: #e4e4e7;
+  --island-shadow: 0 1px 4px rgba(0, 0, 0, 0.08), 0 2px 12px rgba(0, 0, 0, 0.04);
+  --color-primary: #6965db;
+  --color-primary-light: #e0dfff;
+  --color-primary-dark: #5b57d1;
+  --text-primary: #1b1b1f;
+  --text-secondary: #5b5b60;
+  --text-tertiary: #a0a0a5;
+  --bg-hover: #f1f0ff;
+  --bg-active: #e0dfff;
+  --border-color: #e4e4e7;
+  --canvas-bg: #ffffff;
 }
 
-/* Smooth scrolling & selection */
+/* Smooth scrolling */
 html {
   scroll-behavior: smooth;
 }
 
 ::selection {
-  background-color: rgba(99, 102, 241, 0.3);
+  background-color: rgba(105, 101, 219, 0.2);
 }
 
-/* Custom scrollbar */
+/* Excalidraw-style island (floating panels) */
+.island {
+  background: var(--island-bg);
+  border-radius: 12px;
+  box-shadow: var(--island-shadow);
+  border: 1px solid var(--island-border);
+}
+
+/* Custom scrollbar — light */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -26,10 +44,32 @@ html {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.12);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+/* Range input styling for Excalidraw look */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  background: #e4e4e7;
+  border-radius: 3px;
+  outline: none;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
 }

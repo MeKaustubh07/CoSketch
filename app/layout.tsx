@@ -31,8 +31,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${caveat.variable} ${firaCode.variable} h-full antialiased dark`}>
-      <body className="min-h-full flex flex-col bg-zinc-950 text-zinc-100 font-[var(--font-inter)]">
+    <html lang="en" className={`${inter.variable} ${caveat.variable} ${firaCode.variable} h-full antialiased`}>
+      <body className="min-h-full flex flex-col font-[var(--font-inter)]">
         {children}
       </body>
     </html>

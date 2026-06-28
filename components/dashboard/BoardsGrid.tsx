@@ -93,11 +93,11 @@ export function BoardsGrid() {
   return (
     <div>
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-2xl font-semibold">My Boards</h1>
+        <h1 className="text-2xl font-semibold text-gray-900">My Boards</h1>
         <button
           onClick={handleCreate}
           disabled={creating}
-          className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-sm font-medium rounded-lg hover:from-indigo-400 hover:to-purple-500 transition-all shadow-lg shadow-indigo-500/25 disabled:opacity-50"
+          className="flex items-center gap-2 px-4 py-2 bg-[#6965db] text-white text-sm font-medium rounded-lg hover:bg-[#5b57d1] transition-colors disabled:opacity-50"
         >
           {creating ? (
             <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
@@ -112,24 +112,24 @@ export function BoardsGrid() {
 
       {loading ? (
         <div className="flex items-center justify-center py-24">
-          <div className="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+          <div className="w-8 h-8 border-2 border-[#6965db] border-t-transparent rounded-full animate-spin" />
         </div>
       ) : boards.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 text-center">
-          <div className="w-16 h-16 rounded-2xl bg-zinc-800/50 border border-zinc-700 flex items-center justify-center mb-4">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-zinc-500">
+          <div className="w-16 h-16 rounded-2xl bg-gray-100 border border-gray-200 flex items-center justify-center mb-4">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
               <rect x="3" y="3" width="18" height="18" rx="2" />
               <path d="M12 8v8M8 12h8" />
             </svg>
           </div>
-          <p className="text-zinc-500 mb-2">No boards yet</p>
-          <p className="text-sm text-zinc-600 mb-6">
+          <p className="text-gray-500 mb-2">No boards yet</p>
+          <p className="text-sm text-gray-400 mb-6">
             Create your first board to start sketching
           </p>
           <button
             onClick={handleCreate}
             disabled={creating}
-            className="px-5 py-2.5 bg-gradient-to-r from-indigo-500 to-purple-600 text-white text-sm font-medium rounded-lg hover:from-indigo-400 hover:to-purple-500 transition-all"
+            className="px-4 py-2 bg-[#6965db] text-white text-sm font-medium rounded-lg hover:bg-[#5b57d1] transition-colors"
           >
             Create Board
           </button>
@@ -139,12 +139,12 @@ export function BoardsGrid() {
           {boards.map((board) => (
             <div
               key={board.id}
-              className="group relative bg-zinc-900/60 border border-zinc-800 rounded-xl overflow-hidden hover:border-zinc-700 transition-all cursor-pointer"
+              className="group relative bg-white border border-gray-200 rounded-xl overflow-hidden hover:border-gray-300 hover:shadow-sm transition-all cursor-pointer"
               onClick={() => router.push(`/board/${board.id}`)}
             >
               {/* Preview area */}
-              <div className="h-36 bg-gradient-to-br from-zinc-900 to-zinc-800/50 flex items-center justify-center">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="text-zinc-700">
+              <div className="h-36 bg-gray-50 flex items-center justify-center">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="text-gray-300">
                   <path d="M12 19l7-7 3 3-7 7-3-3z" />
                   <path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" />
                   <path d="M2 2l7.586 7.586" />
@@ -165,20 +165,20 @@ export function BoardsGrid() {
                       if (e.key === "Escape") setRenamingId(null);
                     }}
                     onClick={(e) => e.stopPropagation()}
-                    className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-sm text-zinc-200 outline-none focus:border-indigo-500"
+                    className="w-full bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-900 outline-none focus:border-[#6965db]"
                   />
                 ) : (
-                  <p className="text-sm font-medium text-zinc-200 truncate">
+                  <p className="text-sm font-medium text-gray-900 truncate">
                     {board.name}
                   </p>
                 )}
                 <div className="flex items-center justify-between mt-1">
-                  <span className="text-xs text-zinc-500">
+                  <span className="text-xs text-gray-400">
                     {formatDate(board.updatedAt)}
                   </span>
-                  <div className="flex items-center gap-1 text-xs text-zinc-500">
+                  <div className="flex items-center gap-1 text-xs text-gray-400">
                     {board.role === "collaborator" && (
-                      <span className="px-1.5 py-0.5 bg-indigo-500/10 text-indigo-400 rounded text-[10px]">
+                      <span className="px-1.5 py-0.5 bg-[#e0dfff] text-[#6965db] rounded text-[10px]">
                         Shared
                       </span>
                     )}
@@ -198,7 +198,7 @@ export function BoardsGrid() {
                       setRenamingId(board.id);
                       setRenameValue(board.name);
                     }}
-                    className="w-7 h-7 flex items-center justify-center bg-zinc-800/80 backdrop-blur rounded-md text-zinc-400 hover:text-zinc-200 transition-colors"
+                    className="w-7 h-7 flex items-center justify-center bg-white/90 border border-gray-200 rounded-md text-gray-400 hover:text-gray-600 transition-colors"
                     title="Rename"
                   >
                     ✏️
@@ -208,7 +208,7 @@ export function BoardsGrid() {
                       e.stopPropagation();
                       handleDelete(board.id);
                     }}
-                    className="w-7 h-7 flex items-center justify-center bg-zinc-800/80 backdrop-blur rounded-md text-zinc-400 hover:text-red-400 transition-colors"
+                    className="w-7 h-7 flex items-center justify-center bg-white/90 border border-gray-200 rounded-md text-gray-400 hover:text-red-500 transition-colors"
                     title="Delete"
                   >
                     🗑️

@@ -11,27 +11,20 @@ interface SharePanelProps {
 export function SharePanel({ boardId, isOpen, onClose }: SharePanelProps) {
   const [copied, setCopied] = useState<"link" | "password" | null>(null);
   const [password, setPassword] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
 
-  // Fetch board details to get password (owner only)
   useEffect(() => {
     if (!isOpen) return;
-    setLoading(true);
-    fetch(`/api/boards/${boardId}`)
-      .then((r) => r.json())
-      .then((data) => {
-        // Password isn't returned from the detail endpoint for security.
-        // Only shown on creation. Here we just show the join link.
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    // Check if we have the password from room creation
+    const stored = sessionStorage.getItem(`board-${boardId}-password`);
+    if (stored) setPassword(stored);
   }, [isOpen, boardId]);
 
   if (!isOpen) return null;
 
-  const joinUrl = typeof window !== "undefined"
-    ? `${window.location.origin}/board/${boardId}/join`
-    : "";
+  const shareUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/board/${boardId}`
+      : "";
 
   const copyToClipboard = async (text: string, type: "link" | "password") => {
     await navigator.clipboard.writeText(text);
@@ -42,42 +35,41 @@ export function SharePanel({ boardId, isOpen, onClose }: SharePanelProps) {
   return (
     <>
       {/* Backdrop */}
-      <div
-        className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50"
-        onClick={onClose}
-      />
+      <div className="fixed inset-0 bg-black/20 z-50" onClick={onClose} />
 
       {/* Panel */}
       <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md">
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-2xl">
+        <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-lg">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold">Share Board</h2>
+            <h2 className="text-base font-semibold text-gray-900">
+              Share this room
+            </h2>
             <button
               onClick={onClose}
-              className="w-8 h-8 flex items-center justify-center rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition-all"
+              className="w-7 h-7 flex items-center justify-center rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
             >
               ✕
             </button>
           </div>
 
-          {/* Join Link */}
-          <div className="space-y-3">
+          <div className="space-y-4">
+            {/* Join Link */}
             <div>
-              <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">
-                Join Link
+              <label className="block text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1.5">
+                Share Link
               </label>
               <div className="flex gap-2">
                 <input
                   readOnly
-                  value={joinUrl}
-                  className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-zinc-300 outline-none"
+                  value={shareUrl}
+                  className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600 outline-none"
                 />
                 <button
-                  onClick={() => copyToClipboard(joinUrl, "link")}
-                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                  onClick={() => copyToClipboard(shareUrl, "link")}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                     copied === "link"
-                      ? "bg-green-500/20 text-green-400 border border-green-500/30"
-                      : "bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 hover:bg-indigo-500/30"
+                      ? "bg-green-50 text-green-600 border border-green-200"
+                      : "bg-[#e0dfff] text-[#6965db] hover:bg-[#d0ceff]"
                   }`}
                 >
                   {copied === "link" ? "Copied!" : "Copy"}
@@ -85,43 +77,32 @@ export function SharePanel({ boardId, isOpen, onClose }: SharePanelProps) {
               </div>
             </div>
 
-            {/* Board ID */}
+            {/* Room ID */}
             <div>
-              <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">
-                Board ID
+              <label className="block text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1.5">
+                Room ID
               </label>
-              <div className="flex gap-2">
-                <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-indigo-300 font-mono">
-                  {boardId}
-                </code>
-              </div>
+              <code className="block px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-[#6965db] font-mono">
+                {boardId}
+              </code>
             </div>
 
-            {/* Instructions */}
-            <div className="mt-4 p-3 bg-zinc-800/30 border border-zinc-700/50 rounded-lg">
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                <strong className="text-zinc-300">How it works:</strong> Share the join link with
-                collaborators. They&apos;ll need to enter the board password (shown once when the board
-                is created) to gain access. Once joined, they can sketch in real-time.
-              </p>
-            </div>
-
-            {/* Password display (only available immediately after creation) */}
+            {/* Password (only visible to room creator) */}
             {password && (
               <div>
-                <label className="block text-xs text-zinc-500 uppercase tracking-wider mb-1.5">
-                  Join Password
+                <label className="block text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1.5">
+                  Room Password
                 </label>
                 <div className="flex gap-2">
-                  <code className="flex-1 px-3 py-2 bg-zinc-800/50 border border-zinc-700 rounded-lg text-sm text-amber-300 font-mono tracking-widest text-center">
+                  <code className="flex-1 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 font-mono tracking-widest text-center">
                     {password}
                   </code>
                   <button
                     onClick={() => copyToClipboard(password, "password")}
-                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                       copied === "password"
-                        ? "bg-green-500/20 text-green-400 border border-green-500/30"
-                        : "bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 hover:bg-indigo-500/30"
+                        ? "bg-green-50 text-green-600 border border-green-200"
+                        : "bg-[#e0dfff] text-[#6965db] hover:bg-[#d0ceff]"
                     }`}
                   >
                     {copied === "password" ? "Copied!" : "Copy"}
@@ -129,6 +110,14 @@ export function SharePanel({ boardId, isOpen, onClose }: SharePanelProps) {
                 </div>
               </div>
             )}
+
+            {/* Instructions */}
+            <div className="p-3 bg-gray-50 border border-gray-100 rounded-lg">
+              <p className="text-xs text-gray-500 leading-relaxed">
+                Share the link and password with others to let them join this
+                room and sketch together in real-time.
+              </p>
+            </div>
           </div>
         </div>
       </div>

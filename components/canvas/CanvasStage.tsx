@@ -1,6 +1,14 @@
 "use client";
 
 import { useRef, useEffect, useCallback, useReducer } from "react";
+import {
+  useStorage,
+  useMutation,
+  useHistory,
+  useUpdateMyPresence,
+  useOthers,
+} from "@liveblocks/react/suspense";
+import { LiveObject } from "@liveblocks/client";
 import { RoughRenderer } from "@/lib/rough-renderer";
 import {
   createElement,
@@ -12,9 +20,9 @@ import {
   getBoundingBox,
   getElementsInSelectionBox,
   duplicateElement,
-  reorderElements,
   toolToElementType,
 } from "@/lib/scene";
+import { measureText } from "@/lib/text";
 import type {
   CanvasElement,
   AppState,
@@ -23,6 +31,7 @@ import type {
   Point,
   FreedrawElement,
   LinearElement,
+  TextElement,
 } from "@/lib/types";
 import { DEFAULT_STYLE } from "@/lib/types";
 import { Toolbar } from "./Toolbar";
@@ -30,295 +39,223 @@ import { StylePanel } from "./StylePanel";
 import { ZoomControls } from "./ZoomControls";
 import { TextEditorOverlay } from "./TextEditorOverlay";
 import { ExportMenu } from "./ExportMenu";
-import { downloadPNG, downloadJSON, parseCoSketchFile } from "@/lib/export";
-import type { CanvasElement as CanvasElementType } from "@/lib/types";
+import { downloadPNG } from "@/lib/export";
 
-// ─── State management ─────────────────────────────────────────────────────
+// ─── Local UI state (everything per-user; shared scene lives in Liveblocks) ─
 
-interface HistoryEntry {
-  elements: Map<string, CanvasElement>;
-  elementOrder: string[];
-}
-
-interface CanvasState {
-  elements: Map<string, CanvasElement>;
-  elementOrder: string[];
-  appState: AppState;
-  undoStack: HistoryEntry[];
-  redoStack: HistoryEntry[];
-}
-
-type CanvasAction =
+type AppAction =
   | { type: "SET_TOOL"; tool: ToolName }
-  | { type: "ADD_ELEMENT"; element: CanvasElement }
-  | { type: "UPDATE_ELEMENT"; id: string; updates: Partial<CanvasElement> }
-  | { type: "DELETE_ELEMENTS"; ids: string[] }
   | { type: "SET_SELECTION"; ids: string[] }
-  | { type: "SET_DRAG"; drag: DragState | null }
   | { type: "SET_VIEWPORT"; viewport: Partial<AppState["viewport"]> }
   | { type: "SET_EDITING_TEXT"; id: string | null }
-  | { type: "SET_STYLE"; style: Partial<AppState["currentStyle"]> }
-  | { type: "REORDER"; id: string; direction: "front" | "back" | "forward" | "backward" }
-  | { type: "DUPLICATE"; ids: string[] }
-  | { type: "SET_ELEMENT_ORDER"; order: string[] }
-  | { type: "UNDO" }
-  | { type: "REDO" }
-  | { type: "SNAPSHOT" };
+  | { type: "SET_STYLE"; style: Partial<AppState["currentStyle"]> };
 
-const MAX_HISTORY = 50;
+type UIState = Pick<
+  AppState,
+  "viewport" | "activeTool" | "selectedIds" | "editingTextId" | "currentStyle"
+>;
 
-function pushHistory(state: CanvasState): CanvasState {
-  const entry: HistoryEntry = {
-    elements: new Map(state.elements),
-    elementOrder: [...state.elementOrder],
-  };
-  const undoStack = [...state.undoStack, entry].slice(-MAX_HISTORY);
-  return { ...state, undoStack, redoStack: [] };
-}
+const initialUI: UIState = {
+  viewport: { scrollX: 0, scrollY: 0, zoom: 1 },
+  activeTool: "selection",
+  selectedIds: [],
+  editingTextId: null,
+  currentStyle: { ...DEFAULT_STYLE },
+};
 
-function canvasReducer(state: CanvasState, action: CanvasAction): CanvasState {
+function uiReducer(state: UIState, action: AppAction): UIState {
   switch (action.type) {
-    case "SNAPSHOT":
-      return pushHistory(state);
-
-    case "UNDO": {
-      if (state.undoStack.length === 0) return state;
-      const prev = state.undoStack[state.undoStack.length - 1];
-      const redoEntry: HistoryEntry = {
-        elements: new Map(state.elements),
-        elementOrder: [...state.elementOrder],
-      };
-      return {
-        ...state,
-        elements: prev.elements,
-        elementOrder: prev.elementOrder,
-        undoStack: state.undoStack.slice(0, -1),
-        redoStack: [...state.redoStack, redoEntry],
-        appState: { ...state.appState, selectedIds: [] },
-      };
-    }
-
-    case "REDO": {
-      if (state.redoStack.length === 0) return state;
-      const next = state.redoStack[state.redoStack.length - 1];
-      const undoEntry: HistoryEntry = {
-        elements: new Map(state.elements),
-        elementOrder: [...state.elementOrder],
-      };
-      return {
-        ...state,
-        elements: next.elements,
-        elementOrder: next.elementOrder,
-        undoStack: [...state.undoStack, undoEntry],
-        redoStack: state.redoStack.slice(0, -1),
-        appState: { ...state.appState, selectedIds: [] },
-      };
-    }
-
     case "SET_TOOL":
-      return {
-        ...state,
-        appState: { ...state.appState, activeTool: action.tool, selectedIds: [] },
-      };
-
-    case "ADD_ELEMENT": {
-      const newElements = new Map(state.elements);
-      newElements.set(action.element.id, action.element);
-      return {
-        ...state,
-        elements: newElements,
-        elementOrder: [...state.elementOrder, action.element.id],
-      };
-    }
-
-    case "UPDATE_ELEMENT": {
-      const el = state.elements.get(action.id);
-      if (!el) return state;
-      const newElements = new Map(state.elements);
-      newElements.set(action.id, { ...el, ...action.updates, version: el.version + 1 } as CanvasElement);
-      return { ...state, elements: newElements };
-    }
-
-    case "DELETE_ELEMENTS": {
-      const newElements = new Map(state.elements);
-      for (const id of action.ids) {
-        const el = newElements.get(id);
-        if (el) {
-          newElements.set(id, { ...el, isDeleted: true, version: el.version + 1 } as CanvasElement);
-        }
-      }
-      return {
-        ...state,
-        elements: newElements,
-        appState: { ...state.appState, selectedIds: [] },
-      };
-    }
-
+      return { ...state, activeTool: action.tool, selectedIds: [] };
     case "SET_SELECTION":
-      return {
-        ...state,
-        appState: { ...state.appState, selectedIds: action.ids },
-      };
-
-    case "SET_DRAG":
-      return {
-        ...state,
-        appState: { ...state.appState, dragState: action.drag },
-      };
-
+      return { ...state, selectedIds: action.ids };
     case "SET_VIEWPORT":
-      return {
-        ...state,
-        appState: {
-          ...state.appState,
-          viewport: { ...state.appState.viewport, ...action.viewport },
-        },
-      };
-
+      return { ...state, viewport: { ...state.viewport, ...action.viewport } };
     case "SET_EDITING_TEXT":
-      return {
-        ...state,
-        appState: { ...state.appState, editingTextId: action.id },
-      };
-
+      return { ...state, editingTextId: action.id };
     case "SET_STYLE":
-      return {
-        ...state,
-        appState: {
-          ...state.appState,
-          currentStyle: { ...state.appState.currentStyle, ...action.style },
-        },
-      };
-
-    case "REORDER":
-      return {
-        ...state,
-        elementOrder: reorderElements(state.elementOrder, action.id, action.direction),
-      };
-
-    case "DUPLICATE": {
-      const newElements = new Map(state.elements);
-      const newOrder = [...state.elementOrder];
-      const newIds: string[] = [];
-      for (const id of action.ids) {
-        const el = state.elements.get(id);
-        if (el && !el.isDeleted) {
-          const dup = duplicateElement(el);
-          newElements.set(dup.id, dup);
-          newOrder.push(dup.id);
-          newIds.push(dup.id);
-        }
-      }
-      return {
-        ...state,
-        elements: newElements,
-        elementOrder: newOrder,
-        appState: { ...state.appState, selectedIds: newIds },
-      };
-    }
-
-    case "SET_ELEMENT_ORDER":
-      return { ...state, elementOrder: action.order };
-
+      return { ...state, currentStyle: { ...state.currentStyle, ...action.style } };
     default:
       return state;
   }
 }
 
-const initialState: CanvasState = {
-  elements: new Map(),
-  elementOrder: [],
-  appState: {
-    viewport: { scrollX: 0, scrollY: 0, zoom: 1 },
-    activeTool: "selection",
-    selectedIds: [],
-    editingTextId: null,
-    dragState: null,
-    currentStyle: { ...DEFAULT_STYLE },
-  },
-  undoStack: [],
-  redoStack: [],
-};
-
-// ─── CanvasStage component ────────────────────────────────────────────────
+const FLUSH_MS = 60; // throttle storage writes during a drag
 
 export function CanvasStage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<RoughRenderer | null>(null);
-  const [state, dispatch] = useReducer(canvasReducer, initialState);
-  const stateRef = useRef(state);
-  stateRef.current = state;
+  const [ui, dispatch] = useReducer(uiReducer, initialUI);
 
+  // ─── Shared scene (Liveblocks storage) ──────────────────────────────────
+  // useStorage snapshots: LiveList → array; LiveMap → plain object (keyed by id)
+  // in this Liveblocks version. Access via the shapeEntries/shapeGet helpers so
+  // either a Map or an object works.
+  const shapes = useStorage((root) => root.shapes) as unknown;
+  const order = useStorage((root) => root.elementOrder) as unknown as readonly string[];
+  const history = useHistory();
+  const updateMyPresence = useUpdateMyPresence();
+  const others = useOthers();
+
+  // Refs kept fresh for the imperative rAF render loop + event handlers.
+  const shapesRef = useRef(shapes);
+  const orderRef = useRef(order);
+  const uiRef = useRef(ui);
+  const dragRef = useRef<DragState | null>(null);
+  const overrideRef = useRef<Map<string, CanvasElement>>(new Map());
+  const lastFlushRef = useRef(0);
   const dirtyRef = useRef(true);
-  const drawingElementIdRef = useRef<string | null>(null);
 
-  // Mark dirty on state change
+  shapesRef.current = shapes;
+  orderRef.current = order;
+  uiRef.current = ui;
+
   useEffect(() => {
     dirtyRef.current = true;
-  }, [state]);
+  }, [shapes, order, ui]);
 
-  // ─── Canvas setup + rAF loop ──────────────────────────────────────────
+  // ─── Mutations ──────────────────────────────────────────────────────────
+
+  const addElement = useMutation(({ storage }, el: CanvasElement) => {
+    storage.get("shapes").set(el.id, new LiveObject(el as never));
+    storage.get("elementOrder").push(el.id);
+  }, []);
+
+  const addMany = useMutation(({ storage }, els: CanvasElement[]) => {
+    const s = storage.get("shapes");
+    const list = storage.get("elementOrder");
+    for (const el of els) {
+      s.set(el.id, new LiveObject(el as never));
+      list.push(el.id);
+    }
+  }, []);
+
+  const commitPatches = useMutation(
+    ({ storage }, patches: Array<[string, Partial<CanvasElement>]>) => {
+      const s = storage.get("shapes");
+      for (const [id, up] of patches) {
+        const lo = s.get(id);
+        if (lo) lo.update(up as never);
+      }
+    },
+    []
+  );
+
+  const removeElements = useMutation(({ storage }, ids: string[]) => {
+    const s = storage.get("shapes");
+    const list = storage.get("elementOrder");
+    const set = new Set(ids);
+    for (let i = list.length - 1; i >= 0; i--) {
+      const v = list.get(i);
+      if (v && set.has(v)) list.delete(i);
+    }
+    for (const id of ids) s.delete(id);
+  }, []);
+
+  const reorder = useMutation(
+    ({ storage }, id: string, direction: "front" | "back" | "forward" | "backward") => {
+      const list = storage.get("elementOrder");
+      const idx = list.indexOf(id);
+      if (idx === -1) return;
+      const len = list.length;
+      let target = idx;
+      if (direction === "front") target = len - 1;
+      else if (direction === "back") target = 0;
+      else if (direction === "forward") target = Math.min(len - 1, idx + 1);
+      else if (direction === "backward") target = Math.max(0, idx - 1);
+      if (target !== idx) list.move(idx, target);
+    },
+    []
+  );
+
+  // ─── Element access (merge storage snapshot + in-flight overrides) ───────
+
+  const currentElements = useCallback((): Map<string, CanvasElement> => {
+    const m = new Map<string, CanvasElement>();
+    for (const [k, v] of shapeEntries(shapesRef.current)) m.set(k, v);
+    for (const [k, v] of overrideRef.current) m.set(k, v);
+    return m;
+  }, []);
+
+  const currentOrder = useCallback(
+    (): string[] => (orderRef.current ? [...orderRef.current] : []),
+    []
+  );
+
+  const visibleInZOrder = useCallback((): CanvasElement[] => {
+    const els = currentElements();
+    return currentOrder()
+      .map((id) => els.get(id))
+      .filter((el): el is CanvasElement => !!el && !el.isDeleted);
+  }, [currentElements, currentOrder]);
+
+  // Flush in-flight overrides to storage (throttled during drag).
+  const flushOverrides = useCallback(() => {
+    const ov = overrideRef.current;
+    if (ov.size === 0) return;
+    const patches: Array<[string, Partial<CanvasElement>]> = [];
+    for (const [id, el] of ov) patches.push([id, el]);
+    commitPatches(patches);
+    lastFlushRef.current = performance.now();
+  }, [commitPatches]);
+
+  const setOverride = useCallback((el: CanvasElement) => {
+    overrideRef.current.set(el.id, el);
+    dirtyRef.current = true;
+  }, []);
+
+  // ─── Canvas setup + rAF loop ────────────────────────────────────────────
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
-    // Initialize renderer
     rendererRef.current = new RoughRenderer(canvas);
 
-    // Size canvas
     function resize() {
       if (!canvas) return;
       const dpr = window.devicePixelRatio || 1;
       canvas.width = canvas.clientWidth * dpr;
       canvas.height = canvas.clientHeight * dpr;
-      const ctx = canvas.getContext("2d");
-      if (ctx) ctx.scale(dpr, dpr);
       dirtyRef.current = true;
     }
-
     resize();
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
 
-    // rAF loop
     let rafId: number;
     function loop() {
       if (dirtyRef.current && rendererRef.current && canvas) {
-        const s = stateRef.current;
-        // Use CSS dimensions for render calculations
+        const ui = uiRef.current;
         const ctx = canvas.getContext("2d");
-        if (ctx) {
-          const dpr = window.devicePixelRatio || 1;
-          ctx.save();
-          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-        }
-        rendererRef.current.render(
-          s.elements,
-          s.elementOrder,
-          s.appState.viewport,
-          s.appState.selectedIds,
-          s.appState.editingTextId
-        );
-        if (ctx) ctx.restore();
+        const dpr = window.devicePixelRatio || 1;
+        const cssW = canvas.clientWidth;
+        const cssH = canvas.clientHeight;
 
-        // Draw rubberband selection
-        if (s.appState.dragState?.type === "rubberband") {
-          const ds = s.appState.dragState;
-          const dpr = window.devicePixelRatio || 1;
-          if (ctx) {
+        if (ctx) {
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          rendererRef.current.render(
+            currentElements(),
+            currentOrder(),
+            ui.viewport,
+            ui.selectedIds,
+            ui.editingTextId,
+            cssW,
+            cssH
+          );
+
+          // Rubber-band overlay (screen space)
+          const drag = dragRef.current;
+          if (drag?.type === "rubberband") {
             ctx.save();
             ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-            ctx.strokeStyle = "#6366f1";
+            ctx.strokeStyle = "#6965db";
             ctx.lineWidth = 1;
             ctx.setLineDash([4, 4]);
-            ctx.fillStyle = "rgba(99, 102, 241, 0.08)";
-            const x = Math.min(ds.startX, ds.currentX);
-            const y = Math.min(ds.startY, ds.currentY);
-            const w = Math.abs(ds.currentX - ds.startX);
-            const h = Math.abs(ds.currentY - ds.startY);
-            ctx.fillRect(x, y, w, h);
-            ctx.strokeRect(x, y, w, h);
+            ctx.fillStyle = "rgba(105, 101, 219, 0.08)";
+            const x = Math.min(drag.startX, drag.currentX);
+            const y = Math.min(drag.startY, drag.currentY);
+            ctx.fillRect(x, y, Math.abs(drag.currentX - drag.startX), Math.abs(drag.currentY - drag.startY));
+            ctx.strokeRect(x, y, Math.abs(drag.currentX - drag.startX), Math.abs(drag.currentY - drag.startY));
             ctx.restore();
           }
         }
@@ -332,697 +269,610 @@ export function CanvasStage() {
       cancelAnimationFrame(rafId);
       observer.disconnect();
     };
+  }, [currentElements, currentOrder]);
+
+  // ─── Coordinate helpers ──────────────────────────────────────────────────
+
+  const getCanvasPoint = useCallback((e: React.PointerEvent): Point => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    return screenToCanvas(e.clientX - rect.left, e.clientY - rect.top, uiRef.current.viewport);
   }, []);
 
-  // ─── Pointer event handlers ───────────────────────────────────────────
+  const getScreenPoint = useCallback((e: React.PointerEvent): Point => {
+    const rect = canvasRef.current!.getBoundingClientRect();
+    return [e.clientX - rect.left, e.clientY - rect.top];
+  }, []);
 
-  const getCanvasPoint = useCallback(
-    (e: React.PointerEvent): Point => {
-      const canvas = canvasRef.current!;
-      const rect = canvas.getBoundingClientRect();
-      const screenX = e.clientX - rect.left;
-      const screenY = e.clientY - rect.top;
-      return screenToCanvas(screenX, screenY, stateRef.current.appState.viewport);
-    },
-    []
-  );
-
-  const getScreenPoint = useCallback(
-    (e: React.PointerEvent): Point => {
-      const canvas = canvasRef.current!;
-      const rect = canvas.getBoundingClientRect();
-      return [e.clientX - rect.left, e.clientY - rect.top];
-    },
-    []
-  );
+  // ─── Pointer down ─────────────────────────────────────────────────────────
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
       e.preventDefault();
       const canvas = canvasRef.current;
       if (!canvas) return;
-      canvas.setPointerCapture(e.pointerId);
+      try {
+        canvas.setPointerCapture(e.pointerId);
+      } catch {
+        // Pointer may not be capturable (e.g. synthetic events) — non-fatal.
+      }
 
-      const s = stateRef.current;
+      const ui = uiRef.current;
       const [cx, cy] = getCanvasPoint(e);
       const [sx, sy] = getScreenPoint(e);
-      const tool = s.appState.activeTool;
+      const tool = ui.activeTool;
 
-      // Pan tool or middle button or space
       if (tool === "pan" || e.button === 1) {
-        dispatch({
-          type: "SET_DRAG",
-          drag: { type: "pan", startX: sx, startY: sy, currentX: sx, currentY: sy },
-        });
+        dragRef.current = { type: "pan", startX: sx, startY: sy, currentX: sx, currentY: sy };
         return;
       }
 
+      const els = currentElements();
+
       if (tool === "selection") {
-        // Check if clicking on a handle of a selected element
-        for (const selId of s.appState.selectedIds) {
-          const el = s.elements.get(selId);
-          if (el && !el.isDeleted) {
-            const handle = getHitHandle([cx, cy], el, s.appState.viewport.zoom);
+        // Handle hit (single selection only)
+        if (ui.selectedIds.length === 1) {
+          const sel = els.get(ui.selectedIds[0]);
+          if (sel && !sel.isDeleted) {
+            const handle = getHitHandle([cx, cy], sel, ui.viewport.zoom);
             if (handle) {
-              dispatch({
-                type: "SET_DRAG",
-                drag: {
-                  type: handle.type === "rotate" ? "rotate" : "resize",
-                  startX: cx,
-                  startY: cy,
-                  currentX: cx,
-                  currentY: cy,
-                  handle: handle.type,
-                  elementId: selId,
-                },
-              });
+              history.pause();
+              dragRef.current = {
+                type: handle.type === "rotate" ? "rotate" : "resize",
+                startX: cx,
+                startY: cy,
+                currentX: cx,
+                currentY: cy,
+                handle: handle.type,
+                elementId: sel.id,
+              };
               return;
             }
           }
         }
 
-        // Hit-test elements in reverse z-order
-        const visibleElements = s.elementOrder
-          .map((id) => s.elements.get(id))
+        // Hit-test top-most element
+        const visible = currentOrder()
+          .map((id) => els.get(id))
           .filter((el): el is CanvasElement => !!el && !el.isDeleted);
-
-        let hitEl: CanvasElement | null = null;
-        for (let i = visibleElements.length - 1; i >= 0; i--) {
-          if (hitTest(visibleElements[i], [cx, cy], s.appState.viewport.zoom)) {
-            hitEl = visibleElements[i];
+        let hit: CanvasElement | null = null;
+        for (let i = visible.length - 1; i >= 0; i--) {
+          if (hitTest(visible[i], [cx, cy], ui.viewport.zoom)) {
+            hit = visible[i];
             break;
           }
         }
 
-        if (hitEl) {
-          const isAlreadySelected = s.appState.selectedIds.includes(hitEl.id);
+        if (hit) {
+          const already = ui.selectedIds.includes(hit.id);
           if (e.shiftKey) {
-            // Toggle selection
             dispatch({
               type: "SET_SELECTION",
-              ids: isAlreadySelected
-                ? s.appState.selectedIds.filter((id) => id !== hitEl!.id)
-                : [...s.appState.selectedIds, hitEl.id],
+              ids: already
+                ? ui.selectedIds.filter((id) => id !== hit!.id)
+                : [...ui.selectedIds, hit.id],
             });
-          } else if (!isAlreadySelected) {
-            dispatch({ type: "SET_SELECTION", ids: [hitEl.id] });
+          } else if (!already) {
+            dispatch({ type: "SET_SELECTION", ids: [hit.id] });
           }
-
-          // Start move
-          dispatch({
-            type: "SET_DRAG",
-            drag: {
-              type: "move",
-              startX: cx,
-              startY: cy,
-              currentX: cx,
-              currentY: cy,
-            },
-          });
+          history.pause();
+          dragRef.current = { type: "move", startX: cx, startY: cy, currentX: cx, currentY: cy };
         } else {
-          // Rubber-band selection
           dispatch({ type: "SET_SELECTION", ids: [] });
-          dispatch({
-            type: "SET_DRAG",
-            drag: {
-              type: "rubberband",
-              startX: sx,
-              startY: sy,
-              currentX: sx,
-              currentY: sy,
-            },
-          });
+          dragRef.current = { type: "rubberband", startX: sx, startY: sy, currentX: sx, currentY: sy };
         }
         return;
       }
 
-      // Eraser tool
       if (tool === "eraser") {
-        const visibleElements = s.elementOrder
-          .map((id) => s.elements.get(id))
+        const visible = currentOrder()
+          .map((id) => els.get(id))
           .filter((el): el is CanvasElement => !!el && !el.isDeleted);
-
-        for (let i = visibleElements.length - 1; i >= 0; i--) {
-          if (hitTest(visibleElements[i], [cx, cy], s.appState.viewport.zoom)) {
-            dispatch({ type: "SNAPSHOT" });
-            dispatch({ type: "DELETE_ELEMENTS", ids: [visibleElements[i].id] });
+        for (let i = visible.length - 1; i >= 0; i--) {
+          if (hitTest(visible[i], [cx, cy], ui.viewport.zoom)) {
+            removeElements([visible[i].id]);
             break;
           }
         }
+        return;
+      }
+
+      if (tool === "text") {
+        const el = createTextAt(cx, cy, ui.currentStyle);
+        addElement(el);
+        dispatch({ type: "SET_EDITING_TEXT", id: el.id });
+        dispatch({ type: "SET_SELECTION", ids: [el.id] });
         return;
       }
 
       // Drawing tools
       const elementType = toolToElementType(tool);
       if (elementType && elementType !== "text") {
-        dispatch({ type: "SNAPSHOT" });
-        const el = createElement(elementType, cx, cy, s.appState.currentStyle);
-        dispatch({ type: "ADD_ELEMENT", element: el });
-        drawingElementIdRef.current = el.id;
-        dispatch({
-          type: "SET_DRAG",
-          drag: {
-            type: "draw",
-            startX: cx,
-            startY: cy,
-            currentX: cx,
-            currentY: cy,
-            elementId: el.id,
-          },
-        });
-      }
-
-      // Text tool — handled in double-click
-      if (tool === "text") {
-        dispatch({ type: "SNAPSHOT" });
-        const el = createElement("text", cx, cy, s.appState.currentStyle);
-        dispatch({ type: "ADD_ELEMENT", element: el });
-        dispatch({ type: "SET_EDITING_TEXT", id: el.id });
-        dispatch({ type: "SET_SELECTION", ids: [el.id] });
+        const el = createElement(elementType, cx, cy, ui.currentStyle);
+        history.pause();
+        addElement(el);
+        setOverride(el);
+        dragRef.current = {
+          type: "draw",
+          startX: cx,
+          startY: cy,
+          currentX: cx,
+          currentY: cy,
+          elementId: el.id,
+        };
       }
     },
-    [getCanvasPoint, getScreenPoint]
+    [getCanvasPoint, getScreenPoint, currentElements, currentOrder, history, addElement, removeElements, setOverride]
   );
+
+  // ─── Pointer move ─────────────────────────────────────────────────────────
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent) => {
-      const s = stateRef.current;
-      const drag = s.appState.dragState;
-      if (!drag) return;
-
+      const ui = uiRef.current;
       const [cx, cy] = getCanvasPoint(e);
       const [sx, sy] = getScreenPoint(e);
 
+      // Broadcast cursor (canvas coords) — Liveblocks throttles the network.
+      updateMyPresence({ cursor: { x: cx, y: cy } });
+
+      const drag = dragRef.current;
+      if (!drag) return;
+
+      const els = currentElements();
+
       switch (drag.type) {
         case "pan": {
-          const dx = sx - drag.currentX;
-          const dy = sy - drag.currentY;
           dispatch({
             type: "SET_VIEWPORT",
             viewport: {
-              scrollX: s.appState.viewport.scrollX + dx,
-              scrollY: s.appState.viewport.scrollY + dy,
+              scrollX: ui.viewport.scrollX + (sx - drag.currentX),
+              scrollY: ui.viewport.scrollY + (sy - drag.currentY),
             },
           });
-          dispatch({
-            type: "SET_DRAG",
-            drag: { ...drag, currentX: sx, currentY: sy },
-          });
+          drag.currentX = sx;
+          drag.currentY = sy;
           break;
         }
 
         case "move": {
           const dx = cx - drag.currentX;
           const dy = cy - drag.currentY;
-          for (const id of s.appState.selectedIds) {
-            const el = s.elements.get(id);
-            if (el && !el.isDeleted && !el.locked) {
-              const moved = moveElement(el, dx, dy);
-              dispatch({ type: "UPDATE_ELEMENT", id, updates: moved });
-            }
+          for (const id of ui.selectedIds) {
+            const el = els.get(id);
+            if (el && !el.isDeleted && !el.locked) setOverride(moveElement(el, dx, dy));
           }
-          dispatch({
-            type: "SET_DRAG",
-            drag: { ...drag, currentX: cx, currentY: cy },
-          });
+          drag.currentX = cx;
+          drag.currentY = cy;
           break;
         }
 
         case "resize": {
           if (!drag.elementId || !drag.handle) break;
-          const el = s.elements.get(drag.elementId);
+          const el = els.get(drag.elementId);
           if (!el) break;
-          const dx = cx - drag.currentX;
-          const dy = cy - drag.currentY;
-          const resized = resizeElement(el, drag.handle, dx, dy);
-          dispatch({ type: "UPDATE_ELEMENT", id: drag.elementId, updates: resized });
-          dispatch({
-            type: "SET_DRAG",
-            drag: { ...drag, currentX: cx, currentY: cy },
-          });
+          setOverride(resizeElement(el, drag.handle, cx - drag.currentX, cy - drag.currentY));
+          drag.currentX = cx;
+          drag.currentY = cy;
+          break;
+        }
+
+        case "rotate": {
+          if (!drag.elementId) break;
+          const el = els.get(drag.elementId);
+          if (!el) break;
+          const bb = getBoundingBox(el);
+          const centerX = bb.x + bb.width / 2;
+          const centerY = bb.y + bb.height / 2;
+          const angle = Math.atan2(cy - centerY, cx - centerX) + Math.PI / 2;
+          setOverride({ ...el, angle, version: el.version + 1 });
           break;
         }
 
         case "draw": {
           if (!drag.elementId) break;
-          const el = s.elements.get(drag.elementId);
+          const el = els.get(drag.elementId);
           if (!el) break;
-
           if (el.type === "freedraw") {
-            const fdEl = el as FreedrawElement;
-            const relX = cx - el.x;
-            const relY = cy - el.y;
-            dispatch({
-              type: "UPDATE_ELEMENT",
-              id: el.id,
-              updates: {
-                points: [...fdEl.points, [relX, relY] as Point],
-                pressures: [...fdEl.pressures, e.pressure || 0.5],
-              },
+            const fd = el as FreedrawElement;
+            setOverride({
+              ...fd,
+              points: [...fd.points, [cx - el.x, cy - el.y] as Point],
+              pressures: [...fd.pressures, e.pressure || 0.5],
             });
           } else if (el.type === "line" || el.type === "arrow") {
-            const linEl = el as LinearElement;
-            const relX = cx - el.x;
-            const relY = cy - el.y;
-            // Update the last point (endpoint)
-            const newPoints = linEl.points.length <= 1
-              ? [[0, 0] as Point, [relX, relY] as Point]
-              : [...linEl.points.slice(0, -1), [relX, relY] as Point];
-            dispatch({
-              type: "UPDATE_ELEMENT",
-              id: el.id,
-              updates: {
-                points: newPoints,
-                width: relX,
-                height: relY,
-              },
-            });
+            const lin = el as LinearElement;
+            const rx = cx - el.x;
+            const ry = cy - el.y;
+            const pts: Point[] =
+              lin.points.length <= 1 ? [[0, 0], [rx, ry]] : [...lin.points.slice(0, -1), [rx, ry]];
+            setOverride({ ...lin, points: pts, width: rx, height: ry });
           } else {
-            // Shape tools: update width/height
-            dispatch({
-              type: "UPDATE_ELEMENT",
-              id: el.id,
-              updates: {
-                width: cx - el.x,
-                height: cy - el.y,
-              },
-            });
+            setOverride({ ...el, width: cx - el.x, height: cy - el.y });
           }
-          dispatch({
-            type: "SET_DRAG",
-            drag: { ...drag, currentX: cx, currentY: cy },
-          });
+          drag.currentX = cx;
+          drag.currentY = cy;
           break;
         }
 
         case "rubberband": {
-          dispatch({
-            type: "SET_DRAG",
-            drag: { ...drag, currentX: sx, currentY: sy },
-          });
+          drag.currentX = sx;
+          drag.currentY = sy;
+          dirtyRef.current = true;
           break;
         }
       }
+
+      // Throttled storage sync so collaborators see the drag live.
+      if (drag.type !== "rubberband" && drag.type !== "pan") {
+        if (performance.now() - lastFlushRef.current > FLUSH_MS) flushOverrides();
+      }
     },
-    [getCanvasPoint, getScreenPoint]
+    [getCanvasPoint, getScreenPoint, currentElements, updateMyPresence, setOverride, flushOverrides]
   );
 
-  const handlePointerUp = useCallback(
-    () => {
-      const s = stateRef.current;
-      const drag = s.appState.dragState;
+  // ─── Pointer up ───────────────────────────────────────────────────────────
 
-      if (drag?.type === "rubberband") {
-        // Select elements inside the rubberband
-        const v = s.appState.viewport;
-        const [x1, y1] = screenToCanvas(
-          Math.min(drag.startX, drag.currentX),
-          Math.min(drag.startY, drag.currentY),
-          v
-        );
-        const [x2, y2] = screenToCanvas(
-          Math.max(drag.startX, drag.currentX),
-          Math.max(drag.startY, drag.currentY),
-          v
-        );
+  const handlePointerUp = useCallback(() => {
+    const ui = uiRef.current;
+    const drag = dragRef.current;
+    dragRef.current = null;
 
-        const visibleElements = s.elementOrder
-          .map((id) => s.elements.get(id))
-          .filter((el): el is CanvasElement => !!el && !el.isDeleted);
+    if (drag?.type === "rubberband") {
+      const v = ui.viewport;
+      const [x1, y1] = screenToCanvas(
+        Math.min(drag.startX, drag.currentX),
+        Math.min(drag.startY, drag.currentY),
+        v
+      );
+      const [x2, y2] = screenToCanvas(
+        Math.max(drag.startX, drag.currentX),
+        Math.max(drag.startY, drag.currentY),
+        v
+      );
+      const selected = getElementsInSelectionBox(visibleInZOrder(), {
+        x: x1,
+        y: y1,
+        width: x2 - x1,
+        height: y2 - y1,
+      });
+      dispatch({ type: "SET_SELECTION", ids: selected.map((el) => el.id) });
+      dirtyRef.current = true;
+      return;
+    }
 
-        const selected = getElementsInSelectionBox(visibleElements, {
-          x: x1,
-          y: y1,
-          width: x2 - x1,
-          height: y2 - y1,
-        });
-
-        dispatch({ type: "SET_SELECTION", ids: selected.map((el) => el.id) });
-      }
-
-      if (drag?.type === "draw" && drag.elementId) {
-        const el = s.elements.get(drag.elementId);
-        if (el) {
-          const bb = getBoundingBox(el);
-          // Remove tiny elements (accidental clicks)
-          if (bb.width < 3 && bb.height < 3 && el.type !== "freedraw") {
-            dispatch({ type: "DELETE_ELEMENTS", ids: [el.id] });
-          } else {
-            // Select the newly drawn element and reset tool to selection
-            dispatch({ type: "SET_SELECTION", ids: [el.id] });
-            dispatch({ type: "SET_TOOL", tool: "selection" });
-          }
+    if (drag?.type === "draw" && drag.elementId) {
+      const el = overrideRef.current.get(drag.elementId);
+      if (el) {
+        const bb = getBoundingBox(el);
+        if (bb.width < 3 && bb.height < 3 && el.type !== "freedraw") {
+          overrideRef.current.delete(el.id);
+          removeElements([el.id]);
+        } else {
+          flushOverrides();
+          dispatch({ type: "SET_SELECTION", ids: [el.id] });
+          dispatch({ type: "SET_TOOL", tool: "selection" });
         }
-        drawingElementIdRef.current = null;
       }
+      overrideRef.current.clear();
+      history.resume();
+      dirtyRef.current = true;
+      return;
+    }
 
-      dispatch({ type: "SET_DRAG", drag: null });
-    },
-    []
-  );
+    // move / resize / rotate
+    if (drag) {
+      flushOverrides();
+      overrideRef.current.clear();
+      history.resume();
+      dirtyRef.current = true;
+    }
+  }, [visibleInZOrder, flushOverrides, removeElements, history]);
 
-  // ─── Wheel handler (zoom + pan) ───────────────────────────────────────
+  const handlePointerLeave = useCallback(() => {
+    updateMyPresence({ cursor: null });
+  }, [updateMyPresence]);
+
+  // ─── Wheel (zoom + pan) ────────────────────────────────────────────────────
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    const s = stateRef.current;
-
+    const ui = uiRef.current;
     if (e.ctrlKey || e.metaKey) {
-      // Zoom
-      const canvas = canvasRef.current!;
-      const rect = canvas.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
-
+      const rect = canvasRef.current!.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
       const delta = -e.deltaY * 0.001;
-      const newZoom = Math.min(30, Math.max(0.1, s.appState.viewport.zoom * (1 + delta)));
-      const zoomRatio = newZoom / s.appState.viewport.zoom;
-
+      const newZoom = Math.min(30, Math.max(0.1, ui.viewport.zoom * (1 + delta)));
+      const ratio = newZoom / ui.viewport.zoom;
       dispatch({
         type: "SET_VIEWPORT",
         viewport: {
           zoom: newZoom,
-          scrollX: mouseX - (mouseX - s.appState.viewport.scrollX) * zoomRatio,
-          scrollY: mouseY - (mouseY - s.appState.viewport.scrollY) * zoomRatio,
+          scrollX: mx - (mx - ui.viewport.scrollX) * ratio,
+          scrollY: my - (my - ui.viewport.scrollY) * ratio,
         },
       });
     } else {
-      // Pan
       dispatch({
         type: "SET_VIEWPORT",
         viewport: {
-          scrollX: s.appState.viewport.scrollX - e.deltaX,
-          scrollY: s.appState.viewport.scrollY - e.deltaY,
+          scrollX: ui.viewport.scrollX - e.deltaX,
+          scrollY: ui.viewport.scrollY - e.deltaY,
         },
       });
     }
   }, []);
 
-  // ─── Keyboard shortcuts ───────────────────────────────────────────────
+  // ─── Keyboard shortcuts ────────────────────────────────────────────────────
 
   useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      // Don't handle shortcuts when editing text
-      if (stateRef.current.appState.editingTextId) return;
+    function onKey(e: KeyboardEvent) {
+      if (uiRef.current.editingTextId) return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      const ui = uiRef.current;
 
-      const s = stateRef.current;
-
-      // Tool shortcuts
       if (!e.ctrlKey && !e.metaKey) {
-        const toolMap: Record<string, ToolName> = {
+        const map: Record<string, ToolName> = {
           v: "selection", "1": "selection",
           r: "rectangle", "2": "rectangle",
-          d: "diamond",
-          o: "ellipse",
-          a: "arrow",
-          l: "line",
-          p: "draw",
-          t: "text",
-          e: "eraser",
-          h: "pan",
+          d: "diamond", o: "ellipse", a: "arrow", l: "line",
+          p: "draw", t: "text", e: "eraser", h: "pan",
         };
-        const tool = toolMap[e.key.toLowerCase()];
+        const tool = map[e.key.toLowerCase()];
         if (tool) {
           dispatch({ type: "SET_TOOL", tool });
           return;
         }
       }
 
-      // Delete
-      if ((e.key === "Delete" || e.key === "Backspace") && s.appState.selectedIds.length > 0) {
+      if ((e.key === "Delete" || e.key === "Backspace") && ui.selectedIds.length > 0) {
         e.preventDefault();
-        dispatch({ type: "SNAPSHOT" });
-        dispatch({ type: "DELETE_ELEMENTS", ids: s.appState.selectedIds });
+        removeElements(ui.selectedIds);
+        dispatch({ type: "SET_SELECTION", ids: [] });
         return;
       }
-
-      // Ctrl+Z — Undo
       if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
-        dispatch({ type: "UNDO" });
+        history.undo();
         return;
       }
-
-      // Ctrl+Shift+Z or Ctrl+Y — Redo
-      if (
-        ((e.ctrlKey || e.metaKey) && e.key === "z" && e.shiftKey) ||
-        ((e.ctrlKey || e.metaKey) && e.key === "y")
-      ) {
+      if (((e.ctrlKey || e.metaKey) && e.key === "z" && e.shiftKey) || ((e.ctrlKey || e.metaKey) && e.key === "y")) {
         e.preventDefault();
-        dispatch({ type: "REDO" });
+        history.redo();
         return;
       }
-
-      // Ctrl+D — Duplicate
       if ((e.ctrlKey || e.metaKey) && e.key === "d") {
         e.preventDefault();
-        if (s.appState.selectedIds.length > 0) {
-          dispatch({ type: "SNAPSHOT" });
-          dispatch({ type: "DUPLICATE", ids: s.appState.selectedIds });
-        }
+        if (ui.selectedIds.length > 0) duplicateSelected(ui.selectedIds);
         return;
       }
-
-      // Ctrl+A — Select all
       if ((e.ctrlKey || e.metaKey) && e.key === "a") {
         e.preventDefault();
-        const allIds = s.elementOrder.filter((id) => {
-          const el = s.elements.get(id);
-          return el && !el.isDeleted && !el.locked;
-        });
-        dispatch({ type: "SET_SELECTION", ids: allIds });
+        const ids = visibleInZOrder().filter((el) => !el.locked).map((el) => el.id);
+        dispatch({ type: "SET_SELECTION", ids });
         return;
       }
-
-      // Escape — deselect
       if (e.key === "Escape") {
         dispatch({ type: "SET_SELECTION", ids: [] });
         dispatch({ type: "SET_TOOL", tool: "selection" });
-        return;
       }
     }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [history, removeElements, visibleInZOrder]);
 
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  const duplicateSelected = useCallback(
+    (ids: string[]) => {
+      const els = currentElements();
+      const dups: CanvasElement[] = [];
+      for (const id of ids) {
+        const el = els.get(id);
+        if (el && !el.isDeleted) dups.push(duplicateElement(el));
+      }
+      if (dups.length === 0) return;
+      addMany(dups);
+      dispatch({ type: "SET_SELECTION", ids: dups.map((d) => d.id) });
+    },
+    [currentElements, addMany]
+  );
 
-  // ─── Double-click for text ────────────────────────────────────────────
+  // ─── Double-click (text) ───────────────────────────────────────────────────
 
   const handleDoubleClick = useCallback(
     (e: React.MouseEvent) => {
-      const [cx, cy] = screenToCanvas(
-        e.clientX - canvasRef.current!.getBoundingClientRect().left,
-        e.clientY - canvasRef.current!.getBoundingClientRect().top,
-        stateRef.current.appState.viewport
-      );
+      const rect = canvasRef.current!.getBoundingClientRect();
+      const [cx, cy] = screenToCanvas(e.clientX - rect.left, e.clientY - rect.top, uiRef.current.viewport);
+      const ui = uiRef.current;
+      const visible = visibleInZOrder();
 
-      const s = stateRef.current;
-      const visibleElements = s.elementOrder
-        .map((id) => s.elements.get(id))
-        .filter((el): el is CanvasElement => !!el && !el.isDeleted);
-
-      // Check if double-clicking on an existing text element → edit it
-      for (let i = visibleElements.length - 1; i >= 0; i--) {
-        const el = visibleElements[i];
-        if (el.type === "text" && hitTest(el, [cx, cy], s.appState.viewport.zoom)) {
+      for (let i = visible.length - 1; i >= 0; i--) {
+        const el = visible[i];
+        if (el.type === "text" && hitTest(el, [cx, cy], ui.viewport.zoom)) {
           dispatch({ type: "SET_EDITING_TEXT", id: el.id });
           dispatch({ type: "SET_SELECTION", ids: [el.id] });
           return;
         }
       }
 
-      // Check if double-clicking on a shape → create bound text inside it
-      for (let i = visibleElements.length - 1; i >= 0; i--) {
-        const el = visibleElements[i];
-        if (
-          (el.type === "rectangle" || el.type === "ellipse" || el.type === "diamond") &&
-          hitTest(el, [cx, cy], s.appState.viewport.zoom)
-        ) {
-          const bb = getBoundingBox(el);
-          const textEl = createElement("text", bb.x + 4, bb.y + 4, s.appState.currentStyle);
-          const boundText = {
-            ...textEl,
-            containerId: el.id,
-            textAlign: "center" as const,
-            verticalAlign: "middle" as const,
-            width: bb.width - 8,
-            height: bb.height - 8,
-            autoResize: false,
-          };
-          dispatch({ type: "ADD_ELEMENT", element: boundText as CanvasElement });
-          // Add bound text ref to the shape
-          dispatch({
-            type: "UPDATE_ELEMENT",
-            id: el.id,
-            updates: {
-              boundElements: [...el.boundElements, { id: boundText.id, type: "text" as const }],
-            },
-          });
-          dispatch({ type: "SET_EDITING_TEXT", id: boundText.id });
-          dispatch({ type: "SET_SELECTION", ids: [boundText.id] });
-          return;
-        }
-      }
-
-      // Double-click on empty canvas → create standalone text element
-      const el = createElement("text", cx, cy, s.appState.currentStyle);
-      dispatch({ type: "ADD_ELEMENT", element: el });
+      const el = createTextAt(cx, cy, ui.currentStyle);
+      addElement(el);
       dispatch({ type: "SET_EDITING_TEXT", id: el.id });
       dispatch({ type: "SET_SELECTION", ids: [el.id] });
     },
-    []
+    [visibleInZOrder, addElement]
   );
 
-  // ─── Style change handler ────────────────────────────────────────────
+  // ─── Style + reorder + zoom handlers ───────────────────────────────────────
 
   const handleStyleChange = useCallback(
     (updates: Partial<AppState["currentStyle"]>) => {
       dispatch({ type: "SET_STYLE", style: updates });
-
-      // Also apply to selected elements
-      const s = stateRef.current;
-      for (const id of s.appState.selectedIds) {
-        dispatch({ type: "UPDATE_ELEMENT", id, updates: updates as Partial<CanvasElement> });
+      const ui = uiRef.current;
+      if (ui.selectedIds.length > 0) {
+        const patches: Array<[string, Partial<CanvasElement>]> = ui.selectedIds.map((id) => [
+          id,
+          updates as Partial<CanvasElement>,
+        ]);
+        commitPatches(patches);
       }
     },
-    []
+    [commitPatches]
   );
-
-  // ─── Reorder handler ─────────────────────────────────────────────────
 
   const handleReorder = useCallback(
     (direction: "front" | "back" | "forward" | "backward") => {
-      const s = stateRef.current;
-      for (const id of s.appState.selectedIds) {
-        dispatch({ type: "REORDER", id, direction });
-      }
+      for (const id of uiRef.current.selectedIds) reorder(id, direction);
     },
-    []
+    [reorder]
   );
-
-  // ─── Zoom controls ───────────────────────────────────────────────────
 
   const handleZoomChange = useCallback((newZoom: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const s = stateRef.current;
-    const centerX = canvas.clientWidth / 2;
-    const centerY = canvas.clientHeight / 2;
-    const zoomRatio = newZoom / s.appState.viewport.zoom;
-
+    const ui = uiRef.current;
+    const cx = canvas.clientWidth / 2;
+    const cy = canvas.clientHeight / 2;
+    const ratio = newZoom / ui.viewport.zoom;
     dispatch({
       type: "SET_VIEWPORT",
       viewport: {
         zoom: newZoom,
-        scrollX: centerX - (centerX - s.appState.viewport.scrollX) * zoomRatio,
-        scrollY: centerY - (centerY - s.appState.viewport.scrollY) * zoomRatio,
+        scrollX: cx - (cx - ui.viewport.scrollX) * ratio,
+        scrollY: cy - (cy - ui.viewport.scrollY) * ratio,
       },
     });
   }, []);
 
-  // ─── Render ───────────────────────────────────────────────────────────
+  // ─── Derived selection info (single-element lookups, no full-map rebuild) ───
+  const lookup = (id: string): CanvasElement | undefined =>
+    overrideRef.current.get(id) ?? shapeGet(shapes, id);
+  const selectionHasText = ui.selectedIds.some((id) => lookup(id)?.type === "text");
+  const selectionHasLinear = ui.selectedIds.some((id) => {
+    const t = lookup(id)?.type;
+    return t === "line" || t === "arrow";
+  });
+  const editingEl = ui.editingTextId
+    ? (lookup(ui.editingTextId) as (CanvasElement & { type: "text" }) | undefined)
+    : undefined;
+
+  // ─── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="relative w-full h-full overflow-hidden bg-zinc-950">
+    <div className="relative w-full h-full overflow-hidden bg-white">
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 w-full h-full cursor-crosshair"
+        className="absolute inset-0 w-full h-full"
         style={{
-          cursor: getCursorForTool(state.appState.activeTool, state.appState.dragState),
+          cursor: getCursorForTool(ui.activeTool, dragRef.current),
           touchAction: "none",
         }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
+        onPointerLeave={handlePointerLeave}
         onWheel={handleWheel}
         onDoubleClick={handleDoubleClick}
       />
 
-      {/* Text editor overlay */}
-      {state.appState.editingTextId && (
+      {/* Live collaborator cursors */}
+      {others.map(({ connectionId, presence, info }) => {
+        if (!presence.cursor) return null;
+        const x = presence.cursor.x * ui.viewport.zoom + ui.viewport.scrollX;
+        const y = presence.cursor.y * ui.viewport.zoom + ui.viewport.scrollY;
+        return (
+          <div
+            key={connectionId}
+            className="pointer-events-none absolute z-30 will-change-transform"
+            style={{ transform: `translate(${x}px, ${y}px)` }}
+          >
+            <svg width="20" height="28" viewBox="0 0 24 36" fill="none" className="drop-shadow">
+              <path
+                d="M5.65 12.37H5.46l-.14.13L.5 16.88V1.2l11.28 11.17H5.65Z"
+                fill={info?.color || "#6965db"}
+                stroke="white"
+                strokeWidth="1.5"
+              />
+            </svg>
+            <div
+              className="absolute left-4 top-3 px-1.5 py-0.5 rounded text-[11px] text-white font-medium whitespace-nowrap shadow"
+              style={{ backgroundColor: info?.color || "#6965db" }}
+            >
+              {info?.name || "Guest"}
+            </div>
+          </div>
+        );
+      })}
+
+      {editingEl && (
         <TextEditorOverlay
-          element={state.elements.get(state.appState.editingTextId) as CanvasElement & { type: "text" }}
-          viewport={state.appState.viewport}
-          onCommit={(text: string, width: number, height: number) => {
-            const id = state.appState.editingTextId!;
+          element={editingEl}
+          viewport={ui.viewport}
+          onCommit={(text) => {
+            const id = ui.editingTextId!;
             if (text.trim() === "") {
-              dispatch({ type: "DELETE_ELEMENTS", ids: [id] });
+              removeElements([id]);
             } else {
-              dispatch({ type: "UPDATE_ELEMENT", id, updates: { text, width, height } });
+              const { width, height } = measureText(text, editingEl.fontSize, editingEl.fontFamily);
+              commitPatches([[id, { text, width, height }]]);
             }
             dispatch({ type: "SET_EDITING_TEXT", id: null });
           }}
           onCancel={() => {
-            const id = state.appState.editingTextId!;
-            const el = state.elements.get(id);
-            if (el && el.type === "text" && !el.text) {
-              dispatch({ type: "DELETE_ELEMENTS", ids: [id] });
-            }
+            const id = ui.editingTextId!;
+            if (!editingEl.text) removeElements([id]);
             dispatch({ type: "SET_EDITING_TEXT", id: null });
           }}
         />
       )}
 
-      {/* UI overlays */}
-      <Toolbar
-        activeTool={state.appState.activeTool}
-        onToolChange={(tool) => dispatch({ type: "SET_TOOL", tool })}
-      />
+      <Toolbar activeTool={ui.activeTool} onToolChange={(tool) => dispatch({ type: "SET_TOOL", tool })} />
 
       <StylePanel
-        currentStyle={state.appState.currentStyle}
-        activeTool={state.appState.activeTool}
-        hasSelection={state.appState.selectedIds.length > 0}
+        currentStyle={ui.currentStyle}
+        activeTool={ui.activeTool}
+        hasSelection={ui.selectedIds.length > 0}
+        showText={selectionHasText}
+        showArrowheads={selectionHasLinear}
         onStyleChange={handleStyleChange}
         onReorder={handleReorder}
       />
 
-      <ZoomControls
-        zoom={state.appState.viewport.zoom}
-        onZoomChange={handleZoomChange}
-      />
+      <ZoomControls zoom={ui.viewport.zoom} onZoomChange={handleZoomChange} />
 
       <ExportMenu
         onExportPNG={() => {
           const canvas = canvasRef.current;
           if (canvas) {
-            downloadPNG(
-              canvas,
-              stateRef.current.elements,
-              stateRef.current.elementOrder,
-              stateRef.current.appState.viewport
-            );
+            downloadPNG(canvas, currentElements(), currentOrder(), uiRef.current.viewport);
           }
-        }}
-        onExportJSON={() => {
-          downloadJSON(
-            stateRef.current.elements,
-            stateRef.current.elementOrder
-          );
-        }}
-        onImportJSON={(file: File) => {
-          const reader = new FileReader();
-          reader.onload = (e) => {
-            const text = e.target?.result as string;
-            const parsed = parseCoSketchFile(text);
-            if (parsed) {
-              dispatch({ type: "SNAPSHOT" });
-              for (const el of parsed.elements) {
-                dispatch({ type: "ADD_ELEMENT", element: el as CanvasElementType });
-              }
-            }
-          };
-          reader.readAsText(file);
         }}
       />
     </div>
   );
 }
 
-// Inline TextEditorOverlay removed — now imported from ./TextEditorOverlay
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// ─── Cursor helper ────────────────────────────────────────────────────────
+// Liveblocks LiveMap snapshots may be a Map or a plain object depending on
+// version — read through these so both shapes work.
+function shapeEntries(base: unknown): [string, CanvasElement][] {
+  if (!base) return [];
+  if (base instanceof Map) return Array.from(base.entries()) as [string, CanvasElement][];
+  return Object.entries(base as Record<string, CanvasElement>);
+}
+
+function shapeGet(base: unknown, id: string): CanvasElement | undefined {
+  if (!base) return undefined;
+  if (base instanceof Map) return base.get(id) as CanvasElement | undefined;
+  return (base as Record<string, CanvasElement>)[id];
+}
+
+function createTextAt(x: number, y: number, style: AppState["currentStyle"]): TextElement {
+  const el = createElement("text", x, y, style) as TextElement;
+  // Anchor so the caret sits where the user clicked.
+  el.y = y - el.fontSize / 2;
+  return el;
+}
 
 function getCursorForTool(tool: ToolName, drag: DragState | null): string {
   if (drag?.type === "pan") return "grabbing";
@@ -1030,7 +880,6 @@ function getCursorForTool(tool: ToolName, drag: DragState | null): string {
     case "selection": return "default";
     case "pan": return "grab";
     case "text": return "text";
-    case "eraser": return "crosshair";
     default: return "crosshair";
   }
 }

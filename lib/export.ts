@@ -1,49 +1,10 @@
 /**
- * export.ts — Export canvas to PNG or JSON.
+ * export.ts — Export canvas to PNG.
  * Runs entirely client-side.
  */
 
 import type { CanvasElement, Viewport } from "./types";
 import { getBoundingBox } from "./scene";
-
-// ─── JSON export/import ───────────────────────────────────────────────────
-
-export interface CoSketchFile {
-  version: 1;
-  appName: "CoSketch";
-  elements: CanvasElement[];
-  elementOrder: string[];
-  exportedAt: string;
-}
-
-export function exportToJSON(
-  elements: Map<string, CanvasElement>,
-  elementOrder: string[]
-): string {
-  const visibleElements = elementOrder
-    .map((id) => elements.get(id))
-    .filter((el): el is CanvasElement => !!el && !el.isDeleted);
-
-  const file: CoSketchFile = {
-    version: 1,
-    appName: "CoSketch",
-    elements: visibleElements,
-    elementOrder: visibleElements.map((el) => el.id),
-    exportedAt: new Date().toISOString(),
-  };
-
-  return JSON.stringify(file, null, 2);
-}
-
-export function downloadJSON(
-  elements: Map<string, CanvasElement>,
-  elementOrder: string[],
-  filename = "cosketch-export"
-): void {
-  const json = exportToJSON(elements, elementOrder);
-  const blob = new Blob([json], { type: "application/json" });
-  downloadBlob(blob, `${filename}.cosketch`);
-}
 
 // ─── PNG export ───────────────────────────────────────────────────────────
 
@@ -58,7 +19,7 @@ export function exportToPNG(
     scale?: number;
   } = {}
 ): Promise<Blob | null> {
-  const { padding = 40, backgroundColor = "#09090b", scale = 2 } = options;
+  const { padding = 40, backgroundColor = "#ffffff", scale = 2 } = options;
 
   // Calculate bounding box of all visible elements
   const visibleElements = elementOrder
@@ -93,15 +54,10 @@ export function exportToPNG(
   ctx.fillStyle = backgroundColor;
   ctx.fillRect(0, 0, width, height);
 
-  // Draw from source canvas (capture the current render)
-  // We re-render by drawing the source canvas onto the export canvas
-  // with appropriate transforms
+  // Draw from source canvas
   ctx.scale(scale, scale);
   ctx.translate(-minX + padding, -minY + padding);
 
-  // Copy the rendered content from the source canvas
-  // The source canvas already has the rendered elements, so we need to
-  // account for the viewport transform
   const dpr = window.devicePixelRatio || 1;
   const sourceWidth = sourceCanvas.width / dpr;
   const sourceHeight = sourceCanvas.height / dpr;
@@ -140,17 +96,4 @@ function downloadBlob(blob: Blob, filename: string): void {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
-}
-
-// ─── Import from JSON ─────────────────────────────────────────────────────
-
-export function parseCoSketchFile(jsonStr: string): CoSketchFile | null {
-  try {
-    const file = JSON.parse(jsonStr);
-    if (file.appName !== "CoSketch" || file.version !== 1) return null;
-    if (!Array.isArray(file.elements) || !Array.isArray(file.elementOrder)) return null;
-    return file as CoSketchFile;
-  } catch {
-    return null;
-  }
 }

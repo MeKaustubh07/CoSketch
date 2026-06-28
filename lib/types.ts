@@ -174,7 +174,7 @@ export interface AppState {
 // ─── Default values ────────────────────────────────────────────────────────
 
 export const DEFAULT_STYLE: AppState["currentStyle"] = {
-  strokeColor: "#e2e8f0",
+  strokeColor: "#1e1e1e",
   backgroundColor: "transparent",
   fillStyle: "hachure",
   strokeWidth: 2,
@@ -188,23 +188,24 @@ export const DEFAULT_STYLE: AppState["currentStyle"] = {
   endArrowhead: "arrow",
 };
 
+// Excalidraw's exact stroke color palette
 export const STROKE_COLORS = [
-  "#e2e8f0", // zinc-200
-  "#f87171", // red-400
-  "#4ade80", // green-400
-  "#60a5fa", // blue-400
-  "#fb923c", // orange-400
-  "#c084fc", // purple-400
+  "#1e1e1e", // black (default)
+  "#e03131", // red
+  "#2f9e44", // green
+  "#1971c2", // blue
+  "#f08c00", // orange
+  "#6741d9", // violet
 ];
 
+// Excalidraw's exact background color palette
 export const BG_COLORS = [
   "transparent",
-  "#1e293b", // zinc-800
-  "#7f1d1d", // red-900
-  "#14532d", // green-900
-  "#1e3a5f", // blue-900
-  "#7c2d12", // orange-900
-  "#581c87", // purple-900
+  "#ffc9c9", // red light
+  "#b2f2bb", // green light
+  "#a5d8ff", // blue light
+  "#ffec99", // yellow light
+  "#d0bfff", // violet light
 ];
 
 export const FONT_SIZES = [
@@ -225,3 +226,4 @@ export const ROUGHNESS_OPTIONS = [
   { label: "Artist", value: 1 },
   { label: "Cartoonist", value: 3 },
 ];
+

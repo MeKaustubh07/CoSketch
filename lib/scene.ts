@@ -275,11 +275,25 @@ function distanceToSegment(
 
 // ─── Handle positions ─────────────────────────────────────────────────────
 
-const HANDLE_SIZE = 8;
+// Selection geometry — expressed in SCREEN pixels, converted to world units by
+// dividing by zoom. Keeps the box + handles a constant on-screen size at any zoom
+// (Excalidraw behaviour) and keeps hit-testing aligned with what's drawn.
+export const SELECTION_PAD = 7; // gap between element and selection box
+export const ROTATE_OFFSET = 26; // rotate handle distance above the box
+export const HANDLE_SIZE = 9; // drawn handle size
+const HANDLE_HIT = 12; // clickable handle size
 
-export function getHandles(element: CanvasElement): HandleInfo[] {
+// `padWorld`/`rotateWorld` should be the screen constants divided by zoom.
+export function getHandles(
+  element: CanvasElement,
+  padWorld = 0,
+  rotateWorld = ROTATE_OFFSET
+): HandleInfo[] {
   const bb = getBoundingBox(element);
-  const { x, y, width: w, height: h } = bb;
+  const x = bb.x - padWorld;
+  const y = bb.y - padWorld;
+  const w = bb.width + padWorld * 2;
+  const h = bb.height + padWorld * 2;
 
   return [
     { type: "nw", x, y },
@@ -290,7 +304,7 @@ export function getHandles(element: CanvasElement): HandleInfo[] {
     { type: "s", x: x + w / 2, y: y + h },
     { type: "sw", x, y: y + h },
     { type: "w", x, y: y + h / 2 },
-    { type: "rotate", x: x + w / 2, y: y - 30 },
+    { type: "rotate", x: x + w / 2, y: y - rotateWorld },
   ];
 }
 
@@ -299,10 +313,10 @@ export function isPointInHandle(
   handle: HandleInfo,
   zoom: number
 ): boolean {
-  const size = HANDLE_SIZE / zoom;
+  const half = HANDLE_HIT / 2 / zoom;
   return (
-    Math.abs(point[0] - handle.x) <= size &&
-    Math.abs(point[1] - handle.y) <= size
+    Math.abs(point[0] - handle.x) <= half &&
+    Math.abs(point[1] - handle.y) <= half
   );
 }
 
@@ -311,7 +325,7 @@ export function getHitHandle(
   element: CanvasElement,
   zoom: number
 ): HandleInfo | null {
-  const handles = getHandles(element);
+  const handles = getHandles(element, SELECTION_PAD / zoom, ROTATE_OFFSET / zoom);
   for (const handle of handles) {
     if (isPointInHandle(point, handle, zoom)) {
       return handle;
@@ -335,34 +349,73 @@ export function moveElement(
   };
 }
 
+const MIN_SIZE = 8;
+
 export function resizeElement(
   element: CanvasElement,
   handle: HandleInfo["type"],
   dx: number,
   dy: number
 ): CanvasElement {
-  let { x, y, width, height } = element;
+  // Work in bounding-box space so every element type resizes consistently.
+  const bb = getBoundingBox(element);
+  const oldW = bb.width || 1;
+  const oldH = bb.height || 1;
+
+  let nx = bb.x;
+  let ny = bb.y;
+  let nw = bb.width;
+  let nh = bb.height;
 
   switch (handle) {
-    case "nw":
-      x += dx; y += dy; width -= dx; height -= dy; break;
-    case "n":
-      y += dy; height -= dy; break;
-    case "ne":
-      y += dy; width += dx; height -= dy; break;
-    case "e":
-      width += dx; break;
-    case "se":
-      width += dx; height += dy; break;
-    case "s":
-      height += dy; break;
-    case "sw":
-      x += dx; width -= dx; height += dy; break;
-    case "w":
-      x += dx; width -= dx; break;
+    case "nw": nx += dx; ny += dy; nw -= dx; nh -= dy; break;
+    case "n": ny += dy; nh -= dy; break;
+    case "ne": ny += dy; nw += dx; nh -= dy; break;
+    case "e": nw += dx; break;
+    case "se": nw += dx; nh += dy; break;
+    case "s": nh += dy; break;
+    case "sw": nx += dx; nw -= dx; nh += dy; break;
+    case "w": nx += dx; nw -= dx; break;
+    default: return element;
   }
 
-  return { ...element, x, y, width, height, version: element.version + 1 };
+  // Clamp; keep the moving edge anchored when clamping a left/top handle.
+  if (nw < MIN_SIZE) {
+    if (handle === "nw" || handle === "w" || handle === "sw") nx = bb.x + bb.width - MIN_SIZE;
+    nw = MIN_SIZE;
+  }
+  if (nh < MIN_SIZE) {
+    if (handle === "nw" || handle === "n" || handle === "ne") ny = bb.y + bb.height - MIN_SIZE;
+    nh = MIN_SIZE;
+  }
+
+  const sX = nw / oldW;
+  const sY = nh / oldH;
+  const v = element.version + 1;
+
+  // Point-based elements: rescale points around the new origin.
+  if (element.type === "line" || element.type === "arrow" || element.type === "freedraw") {
+    const points = element.points.map(
+      ([px, py]) =>
+        [(element.x + px - bb.x) * sX, (element.y + py - bb.y) * sY] as Point
+    );
+    return { ...element, x: nx, y: ny, width: nw, height: nh, points, version: v };
+  }
+
+  // Text: scale the font with the box height (Excalidraw behaviour).
+  if (element.type === "text") {
+    return {
+      ...element,
+      x: nx,
+      y: ny,
+      width: nw,
+      height: nh,
+      fontSize: Math.max(8, element.fontSize * sY),
+      version: v,
+    };
+  }
+
+  return { ...element, x: nx, y: ny, width: nw, height: nh, version: v };
 }
 
 export function rotateElement(
