@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { verifyPassword } from "@/lib/password";
 
-// POST /api/boards/[boardId]/join — join a board with password
+// POST /api/boards/[boardId]/join — verify the room password
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ boardId: string }> }
@@ -20,13 +21,12 @@ export async function POST(
   });
 
   if (!board) {
-    return NextResponse.json({ error: "Board not found" }, { status: 404 });
+    return NextResponse.json({ error: "Room not found" }, { status: 404 });
   }
 
-  // Verify password
-  if (password !== board.joinPassword) {
+  if (!verifyPassword(password, board.joinPassword)) {
     return NextResponse.json({ error: "Incorrect password" }, { status: 403 });
   }
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ ok: true });
 }

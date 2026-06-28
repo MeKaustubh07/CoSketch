@@ -1,43 +1,47 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { getStoredName, setStoredName, setRoomPassword } from "@/lib/user";
 
 export default function HomePage() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<"create" | "join">("create");
+  const [name, setName] = useState("");
   const [roomId, setRoomId] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    setName(getStoredName());
+  }, []);
+
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    setLoading(true);
+    if (!name.trim()) return setError("Please enter your name");
+    if (!password.trim()) return setError("Please set a room password");
 
+    setLoading(true);
     try {
       const res = await fetch("/api/boards", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: roomId.trim() || "Untitled" }),
+        body: JSON.stringify({ password: password.trim() }),
       });
-
-      if (res.ok) {
-        const data = await res.json();
-        // Store the password in sessionStorage so we can show it in the share panel
-        sessionStorage.setItem(
-          `board-${data.board.id}-password`,
-          data.board.joinPassword
-        );
-        router.push(`/board/${data.board.id}`);
-      } else {
-        const data = await res.json();
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
         setError(data.error || "Failed to create room");
+        setLoading(false);
+        return;
       }
+      const { board } = await res.json();
+      setStoredName(name);
+      setRoomPassword(board.id, password.trim());
+      router.push(`/board/${board.id}`);
     } catch {
       setError("Something went wrong");
-    } finally {
       setLoading(false);
     }
   };
@@ -45,35 +49,28 @@ export default function HomePage() {
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-
-    if (!roomId.trim()) {
-      setError("Room ID is required");
-      return;
-    }
-
-    if (!password.trim()) {
-      setError("Password is required");
-      return;
-    }
+    if (!name.trim()) return setError("Please enter your name");
+    if (!roomId.trim()) return setError("Room ID is required");
+    if (!password.trim()) return setError("Password is required");
 
     setLoading(true);
-
     try {
       const res = await fetch(`/api/boards/${roomId.trim()}/join`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ password: password.trim() }),
       });
-
-      if (res.ok) {
-        router.push(`/board/${roomId.trim()}`);
-      } else {
-        const data = await res.json();
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
         setError(data.error || "Failed to join room");
+        setLoading(false);
+        return;
       }
+      setStoredName(name);
+      setRoomPassword(roomId.trim(), password.trim());
+      router.push(`/board/${roomId.trim()}`);
     } catch {
       setError("Something went wrong");
-    } finally {
       setLoading(false);
     }
   };
@@ -116,27 +113,17 @@ export default function HomePage() {
           {/* Tab switcher */}
           <div className="flex bg-gray-100 rounded-lg p-1 mb-6">
             <button
-              onClick={() => {
-                setActiveTab("create");
-                setError("");
-              }}
+              onClick={() => { setActiveTab("create"); setError(""); }}
               className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
-                activeTab === "create"
-                  ? "bg-[#6965db] text-white shadow-sm"
-                  : "text-gray-500 hover:text-gray-700"
+                activeTab === "create" ? "bg-[#6965db] text-white shadow-sm" : "text-gray-500 hover:text-gray-700"
               }`}
             >
               Create room
             </button>
             <button
-              onClick={() => {
-                setActiveTab("join");
-                setError("");
-              }}
+              onClick={() => { setActiveTab("join"); setError(""); }}
               className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
-                activeTab === "join"
-                  ? "bg-[#6965db] text-white shadow-sm"
-                  : "text-gray-500 hover:text-gray-700"
+                activeTab === "join" ? "bg-[#6965db] text-white shadow-sm" : "text-gray-500 hover:text-gray-700"
               }`}
             >
               Join room
@@ -144,40 +131,51 @@ export default function HomePage() {
           </div>
 
           {/* Form */}
-          <form
-            onSubmit={activeTab === "create" ? handleCreate : handleJoin}
-            className="space-y-4"
-          >
-            <div>
-              <label className="block text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1.5">
-                {activeTab === "create" ? "Room name" : "Room ID"}
-              </label>
+          <form onSubmit={activeTab === "create" ? handleCreate : handleJoin} className="space-y-4">
+            {/* Your name */}
+            <Field label="Your name">
               <input
                 type="text"
-                value={roomId}
-                onChange={(e) => setRoomId(e.target.value)}
-                placeholder={
-                  activeTab === "create" ? "e.g. My Canvas" : "Enter the room ID"
-                }
-                required={activeTab === "join"}
-                className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-lg text-gray-900 placeholder-gray-400 text-sm outline-none focus:border-[#6965db] focus:ring-2 focus:ring-[#6965db]/20 transition-all"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Kaustubh"
+                maxLength={32}
+                required
+                className={inputCls}
               />
-            </div>
+            </Field>
 
+            {/* Room ID — join only */}
             {activeTab === "join" && (
-              <div>
-                <label className="block text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1.5">
-                  Password
-                </label>
+              <Field label="Room ID">
                 <input
                   type="text"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter the room password"
+                  value={roomId}
+                  onChange={(e) => setRoomId(e.target.value)}
+                  placeholder="Enter the room ID"
                   required
-                  className="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-lg text-gray-900 placeholder-gray-400 text-sm outline-none focus:border-[#6965db] focus:ring-2 focus:ring-[#6965db]/20 transition-all font-mono tracking-widest text-center"
+                  className={`${inputCls} font-mono`}
                 />
-              </div>
+              </Field>
+            )}
+
+            {/* Password */}
+            <Field label={activeTab === "create" ? "Set a password" : "Password"}>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={activeTab === "create" ? "Choose a room password" : "Enter the room password"}
+                required
+                className={inputCls}
+              />
+            </Field>
+
+            {activeTab === "create" && (
+              <p className="text-[11px] text-gray-400 leading-relaxed">
+                Share the Room ID and password with people you want to collaborate
+                with. You can copy both anytime from the Share panel.
+              </p>
             )}
 
             {error && (
@@ -191,19 +189,29 @@ export default function HomePage() {
               disabled={loading}
               className="w-full py-3 bg-[#6965db] text-white font-medium rounded-lg hover:bg-[#5b57d1] disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
             >
-              {loading
-                ? "Loading…"
-                : activeTab === "create"
-                ? "Create & Enter"
-                : "Join Room"}
+              {loading ? "Loading…" : activeTab === "create" ? "Create & Enter" : "Join Room"}
             </button>
           </form>
         </div>
 
         <p className="text-center text-xs text-gray-400 mt-4">
-          No sign-up needed · Share a link to collaborate
+          No sign-up needed · Private rooms, real-time collaboration
         </p>
       </div>
+    </div>
+  );
+}
+
+const inputCls =
+  "w-full px-3 py-2.5 bg-white border border-gray-200 rounded-lg text-gray-900 placeholder-gray-400 text-sm outline-none focus:border-[#6965db] focus:ring-2 focus:ring-[#6965db]/20 transition-all";
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="block text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1.5">
+        {label}
+      </label>
+      {children}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
+import { getRoomPassword } from "@/lib/user";
 
 interface SharePanelProps {
   boardId: string;
@@ -9,15 +10,7 @@ interface SharePanelProps {
 }
 
 export function SharePanel({ boardId, isOpen, onClose }: SharePanelProps) {
-  const [copied, setCopied] = useState<"link" | "password" | null>(null);
-  const [password, setPassword] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    // Check if we have the password from room creation
-    const stored = sessionStorage.getItem(`board-${boardId}-password`);
-    if (stored) setPassword(stored);
-  }, [isOpen, boardId]);
+  const [copied, setCopied] = useState<"link" | "id" | "password" | null>(null);
 
   if (!isOpen) return null;
 
@@ -25,10 +18,11 @@ export function SharePanel({ boardId, isOpen, onClose }: SharePanelProps) {
     typeof window !== "undefined"
       ? `${window.location.origin}/board/${boardId}`
       : "";
+  const password = getRoomPassword(boardId);
 
-  const copyToClipboard = async (text: string, type: "link" | "password") => {
+  const copyToClipboard = async (text: string, which: "link" | "id" | "password") => {
     await navigator.clipboard.writeText(text);
-    setCopied(type);
+    setCopied(which);
     setTimeout(() => setCopied(null), 2000);
   };
 
@@ -82,19 +76,31 @@ export function SharePanel({ boardId, isOpen, onClose }: SharePanelProps) {
               <label className="block text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1.5">
                 Room ID
               </label>
-              <code className="block px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-[#6965db] font-mono">
-                {boardId}
-              </code>
+              <div className="flex gap-2">
+                <code className="flex-1 px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-[#6965db] font-mono">
+                  {boardId}
+                </code>
+                <button
+                  onClick={() => copyToClipboard(boardId, "id")}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                    copied === "id"
+                      ? "bg-green-50 text-green-600 border border-green-200"
+                      : "bg-[#e0dfff] text-[#6965db] hover:bg-[#d0ceff]"
+                  }`}
+                >
+                  {copied === "id" ? "Copied!" : "Copy"}
+                </button>
+              </div>
             </div>
 
-            {/* Password (only visible to room creator) */}
+            {/* Password (known this session) */}
             {password && (
               <div>
                 <label className="block text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1.5">
                   Room Password
                 </label>
                 <div className="flex gap-2">
-                  <code className="flex-1 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 font-mono tracking-widest text-center">
+                  <code className="flex-1 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 font-mono">
                     {password}
                   </code>
                   <button
@@ -114,8 +120,8 @@ export function SharePanel({ boardId, isOpen, onClose }: SharePanelProps) {
             {/* Instructions */}
             <div className="p-3 bg-gray-50 border border-gray-100 rounded-lg">
               <p className="text-xs text-gray-500 leading-relaxed">
-                Share the link and password with others to let them join this
-                room and sketch together in real-time.
+                Share the Room ID and password with people you want to collaborate
+                with — both are required to join.
               </p>
             </div>
           </div>

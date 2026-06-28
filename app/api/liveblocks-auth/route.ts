@@ -1,6 +1,8 @@
 import { Liveblocks } from "@liveblocks/node";
 import { NextRequest, NextResponse } from "next/server";
 import { nanoid } from "nanoid";
+import { prisma } from "@/lib/prisma";
+import { verifyPassword } from "@/lib/password";
 
 // Lazily construct the client — building the client validates the secret key,
 // so doing it at module scope would crash the production build when the env
@@ -33,18 +35,33 @@ function userColor(id: string): string {
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const room = body.room as string | undefined;
+  const password = ((body.password as string) || "").trim();
 
   if (!room) {
     return NextResponse.json({ error: "Room ID required" }, { status: 400 });
   }
 
-  // Generate an anonymous user ID for this session
+  // Enforce the room password here — this is the real access gate, so a share
+  // link alone cannot grant access without the password.
+  const board = await prisma.board.findUnique({
+    where: { id: room },
+    select: { joinPassword: true },
+  });
+  if (!board) {
+    return NextResponse.json({ error: "Room not found" }, { status: 404 });
+  }
+  if (!verifyPassword(password, board.joinPassword)) {
+    return NextResponse.json({ error: "Incorrect password" }, { status: 403 });
+  }
+
+  // Anonymous per-session user id; display name comes from the client.
   const userId = `user-${nanoid(6)}`;
+  const name = ((body.name as string) || "").trim().slice(0, 32) || "Guest";
 
   const session = getLiveblocks().prepareSession(userId, {
     userInfo: {
-      name: `User ${userId.slice(-4)}`,
-      color: userColor(userId),
+      name,
+      color: userColor(name),
     },
   });
 

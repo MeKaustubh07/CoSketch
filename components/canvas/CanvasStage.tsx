@@ -104,6 +104,7 @@ export function CanvasStage() {
   const dragRef = useRef<DragState | null>(null);
   const overrideRef = useRef<Map<string, CanvasElement>>(new Map());
   const lastFlushRef = useRef(0);
+  const lastPresenceRef = useRef(0);
   const dirtyRef = useRef(true);
 
   shapesRef.current = shapes;
@@ -412,13 +413,20 @@ export function CanvasStage() {
       const [cx, cy] = getCanvasPoint(e);
       const [sx, sy] = getScreenPoint(e);
 
-      // Broadcast cursor (canvas coords) — Liveblocks throttles the network.
-      updateMyPresence({ cursor: { x: cx, y: cy } });
+      // Broadcast cursor (canvas coords), throttled — doesn't affect local render.
+      const now = performance.now();
+      if (now - lastPresenceRef.current > 40) {
+        updateMyPresence({ cursor: { x: cx, y: cy } });
+        lastPresenceRef.current = now;
+      }
 
       const drag = dragRef.current;
       if (!drag) return;
 
-      const els = currentElements();
+      // Per-element lookup — avoid rebuilding the whole scene map on every
+      // pointer event (was the source of drag lag as the canvas filled up).
+      const getEl = (id: string): CanvasElement | undefined =>
+        overrideRef.current.get(id) ?? shapeGet(shapesRef.current, id);
 
       switch (drag.type) {
         case "pan": {
@@ -438,7 +446,7 @@ export function CanvasStage() {
           const dx = cx - drag.currentX;
           const dy = cy - drag.currentY;
           for (const id of ui.selectedIds) {
-            const el = els.get(id);
+            const el = getEl(id);
             if (el && !el.isDeleted && !el.locked) setOverride(moveElement(el, dx, dy));
           }
           drag.currentX = cx;
@@ -448,7 +456,7 @@ export function CanvasStage() {
 
         case "resize": {
           if (!drag.elementId || !drag.handle) break;
-          const el = els.get(drag.elementId);
+          const el = getEl(drag.elementId);
           if (!el) break;
           setOverride(resizeElement(el, drag.handle, cx - drag.currentX, cy - drag.currentY));
           drag.currentX = cx;
@@ -458,7 +466,7 @@ export function CanvasStage() {
 
         case "rotate": {
           if (!drag.elementId) break;
-          const el = els.get(drag.elementId);
+          const el = getEl(drag.elementId);
           if (!el) break;
           const bb = getBoundingBox(el);
           const centerX = bb.x + bb.width / 2;
@@ -470,7 +478,7 @@ export function CanvasStage() {
 
         case "draw": {
           if (!drag.elementId) break;
-          const el = els.get(drag.elementId);
+          const el = getEl(drag.elementId);
           if (!el) break;
           if (el.type === "freedraw") {
             const fd = el as FreedrawElement;
@@ -507,7 +515,7 @@ export function CanvasStage() {
         if (performance.now() - lastFlushRef.current > FLUSH_MS) flushOverrides();
       }
     },
-    [getCanvasPoint, getScreenPoint, currentElements, updateMyPresence, setOverride, flushOverrides]
+    [getCanvasPoint, getScreenPoint, updateMyPresence, setOverride, flushOverrides]
   );
 
   // ─── Pointer up ───────────────────────────────────────────────────────────

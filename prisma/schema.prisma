@@ -14,7 +14,7 @@ model Board {
   id   String @id // nanoid — also serves as Liveblocks room ID
   name String @default("Untitled")
 
-  // Plaintext password for joining (simple — no auth needed)
+  // scrypt hash of the room password: "<salt>:<hash>"
   joinPassword String
 
   createdAt DateTime @default(now())
