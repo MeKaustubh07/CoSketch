@@ -7,28 +7,34 @@ import {
   ClientSideSuspense,
 } from "@liveblocks/react/suspense";
 import { LiveMap, LiveList } from "@liveblocks/client";
+import { clearRoomAuthed } from "@/lib/user";
 
 interface RoomProviderWrapperProps {
   roomId: string;
   userName: string;
-  password: string;
   children: ReactNode;
 }
 
 export function RoomProviderWrapper({
   roomId,
   userName,
-  password,
   children,
 }: RoomProviderWrapperProps) {
   return (
     <LiveblocksProvider
       authEndpoint={async (room) => {
+        // Access is proven by the httpOnly room-access cookie (sent automatically).
         const res = await fetch("/api/liveblocks-auth", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ room, name: userName, password }),
+          body: JSON.stringify({ room, name: userName }),
         });
+        if (res.status === 401 || res.status === 403) {
+          // Cookie missing/expired — drop the session flag and re-show the gate.
+          clearRoomAuthed(room as string);
+          window.location.reload();
+          throw new Error("Room access expired");
+        }
         return await res.json();
       }}
     >

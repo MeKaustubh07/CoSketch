@@ -9,37 +9,31 @@ import { AvatarStack } from "@/components/collab/Cursors";
 import {
   getStoredName,
   setStoredName,
-  getRoomPassword,
-  setRoomPassword,
+  isRoomAuthed,
+  markRoomAuthed,
 } from "@/lib/user";
 
 export default function BoardPage() {
   const params = useParams();
   const boardId = params.boardId as string;
 
-  const [ready, setReady] = useState<{ name: string; password: string } | null>(null);
+  const [name, setName] = useState<string | null>(null);
   const [resolved, setResolved] = useState(false);
 
   useEffect(() => {
-    const name = getStoredName();
-    const password = getRoomPassword(boardId);
-    if (name && password) setReady({ name, password });
+    const n = getStoredName();
+    if (n && isRoomAuthed(boardId)) setName(n);
     setResolved(true);
   }, [boardId]);
 
   if (!resolved) return null;
 
-  if (!ready) {
-    return (
-      <AccessGate
-        boardId={boardId}
-        onEnter={(name, password) => setReady({ name, password })}
-      />
-    );
+  if (!name) {
+    return <AccessGate boardId={boardId} onEnter={(n) => setName(n)} />;
   }
 
   return (
-    <RoomProviderWrapper roomId={boardId} userName={ready.name} password={ready.password}>
+    <RoomProviderWrapper roomId={boardId} userName={name}>
       <BoardRoom boardId={boardId} />
     </RoomProviderWrapper>
   );
@@ -50,7 +44,7 @@ function AccessGate({
   onEnter,
 }: {
   boardId: string;
-  onEnter: (name: string, password: string) => void;
+  onEnter: (name: string) => void;
 }) {
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
@@ -81,8 +75,8 @@ function AccessGate({
         return;
       }
       setStoredName(name);
-      setRoomPassword(boardId, password.trim());
-      onEnter(name.trim(), password.trim());
+      markRoomAuthed(boardId);
+      onEnter(name.trim());
     } catch {
       setError("Something went wrong");
       setLoading(false);

@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyPassword } from "@/lib/password";
+import { signRoomToken, roomCookieName } from "@/lib/roomToken";
 
-// POST /api/boards/[boardId]/join — verify the room password
+// POST /api/boards/[boardId]/join — verify the room password, grant access cookie
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ boardId: string }> }
@@ -28,5 +29,13 @@ export async function POST(
     return NextResponse.json({ error: "Incorrect password" }, { status: 403 });
   }
 
-  return NextResponse.json({ ok: true });
+  const res = NextResponse.json({ ok: true });
+  res.cookies.set(roomCookieName(boardId), signRoomToken(boardId), {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 24 * 60 * 60,
+  });
+  return res;
 }

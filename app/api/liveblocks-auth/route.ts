@@ -1,8 +1,7 @@
 import { Liveblocks } from "@liveblocks/node";
 import { NextRequest, NextResponse } from "next/server";
 import { nanoid } from "nanoid";
-import { prisma } from "@/lib/prisma";
-import { verifyPassword } from "@/lib/password";
+import { verifyRoomToken, roomCookieName } from "@/lib/roomToken";
 
 // Lazily construct the client — building the client validates the secret key,
 // so doing it at module scope would crash the production build when the env
@@ -35,23 +34,16 @@ function userColor(id: string): string {
 export async function POST(request: NextRequest) {
   const body = await request.json();
   const room = body.room as string | undefined;
-  const password = ((body.password as string) || "").trim();
 
   if (!room) {
     return NextResponse.json({ error: "Room ID required" }, { status: 400 });
   }
 
-  // Enforce the room password here — this is the real access gate, so a share
-  // link alone cannot grant access without the password.
-  const board = await prisma.board.findUnique({
-    where: { id: room },
-    select: { joinPassword: true },
-  });
-  if (!board) {
-    return NextResponse.json({ error: "Room not found" }, { status: 404 });
-  }
-  if (!verifyPassword(password, board.joinPassword)) {
-    return NextResponse.json({ error: "Incorrect password" }, { status: 403 });
+  // Access is proven by the httpOnly room-access cookie (minted once the
+  // password was verified). The password itself never reaches this endpoint.
+  const token = request.cookies.get(roomCookieName(room))?.value;
+  if (!verifyRoomToken(token, room)) {
+    return NextResponse.json({ error: "Not authorized for this room" }, { status: 403 });
   }
 
   // Anonymous per-session user id; display name comes from the client.

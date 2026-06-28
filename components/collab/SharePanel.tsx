@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { getRoomPassword } from "@/lib/user";
 
 interface SharePanelProps {
   boardId: string;
@@ -10,7 +9,7 @@ interface SharePanelProps {
 }
 
 export function SharePanel({ boardId, isOpen, onClose }: SharePanelProps) {
-  const [copied, setCopied] = useState<"link" | "id" | "password" | null>(null);
+  const [copied, setCopied] = useState<"link" | "id" | null>(null);
 
   if (!isOpen) return null;
 
@@ -18,9 +17,8 @@ export function SharePanel({ boardId, isOpen, onClose }: SharePanelProps) {
     typeof window !== "undefined"
       ? `${window.location.origin}/board/${boardId}`
       : "";
-  const password = getRoomPassword(boardId);
 
-  const copyToClipboard = async (text: string, which: "link" | "id" | "password") => {
+  const copyToClipboard = async (text: string, which: "link" | "id") => {
     await navigator.clipboard.writeText(text);
     setCopied(which);
     setTimeout(() => setCopied(null), 2000);
@@ -93,35 +91,11 @@ export function SharePanel({ boardId, isOpen, onClose }: SharePanelProps) {
               </div>
             </div>
 
-            {/* Password (known this session) */}
-            {password && (
-              <div>
-                <label className="block text-[10px] text-gray-400 uppercase tracking-wider font-medium mb-1.5">
-                  Room Password
-                </label>
-                <div className="flex gap-2">
-                  <code className="flex-1 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 font-mono">
-                    {password}
-                  </code>
-                  <button
-                    onClick={() => copyToClipboard(password, "password")}
-                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      copied === "password"
-                        ? "bg-green-50 text-green-600 border border-green-200"
-                        : "bg-[#e0dfff] text-[#6965db] hover:bg-[#d0ceff]"
-                    }`}
-                  >
-                    {copied === "password" ? "Copied!" : "Copy"}
-                  </button>
-                </div>
-              </div>
-            )}
-
             {/* Instructions */}
             <div className="p-3 bg-gray-50 border border-gray-100 rounded-lg">
               <p className="text-xs text-gray-500 leading-relaxed">
-                Share the Room ID and password with people you want to collaborate
-                with — both are required to join.
+                Share the Room ID and the password you set — both are required to
+                join. For privacy, the password isn&apos;t stored or shown here.
               </p>
             </div>
           </div>

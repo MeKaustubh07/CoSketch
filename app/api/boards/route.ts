@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/password";
+import { signRoomToken, roomCookieName } from "@/lib/roomToken";
 import { nanoid } from "nanoid";
 
 // ─── POST /api/boards — create a new room ─────────────────────────────────
@@ -21,8 +22,17 @@ export async function POST(request: Request) {
     data: { id: boardId, name, joinPassword: hashPassword(password) },
   });
 
-  return NextResponse.json(
+  const res = NextResponse.json(
     { board: { id: board.id, name: board.name } },
     { status: 201 }
   );
+  // Creator is granted access — set the room-access cookie (httpOnly).
+  res.cookies.set(roomCookieName(board.id), signRoomToken(board.id), {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 24 * 60 * 60,
+  });
+  return res;
 }

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { getStoredName, setStoredName, setRoomPassword } from "@/lib/user";
+import { getStoredName, setStoredName, markRoomAuthed } from "@/lib/user";
 
 export default function HomePage() {
   const router = useRouter();
@@ -38,7 +38,7 @@ export default function HomePage() {
       }
       const { board } = await res.json();
       setStoredName(name);
-      setRoomPassword(board.id, password.trim());
+      markRoomAuthed(board.id);
       router.push(`/board/${board.id}`);
     } catch {
       setError("Something went wrong");
@@ -67,7 +67,7 @@ export default function HomePage() {
         return;
       }
       setStoredName(name);
-      setRoomPassword(roomId.trim(), password.trim());
+      markRoomAuthed(roomId.trim());
       router.push(`/board/${roomId.trim()}`);
     } catch {
       setError("Something went wrong");

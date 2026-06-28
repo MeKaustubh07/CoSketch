@@ -15,16 +15,22 @@ export function setStoredName(name: string): void {
   sessionStorage.setItem(USERNAME_KEY, name.trim());
 }
 
-// Per-room password, kept for the session so the creator/joiner isn't asked
-// twice and so the room provider can pass it to the auth endpoint.
-const roomKey = (id: string) => `cosketch-pw-${id}`;
+// Non-secret per-room flag: "this session already passed the password gate".
+// The real credential is the httpOnly room-access cookie — this is only used to
+// decide whether to show the gate UI. No password is ever stored client-side.
+const roomKey = (id: string) => `cosketch-ok-${id}`;
 
-export function getRoomPassword(id: string): string {
-  if (typeof window === "undefined") return "";
-  return sessionStorage.getItem(roomKey(id)) ?? "";
+export function isRoomAuthed(id: string): boolean {
+  if (typeof window === "undefined") return false;
+  return sessionStorage.getItem(roomKey(id)) === "1";
 }
 
-export function setRoomPassword(id: string, pw: string): void {
+export function markRoomAuthed(id: string): void {
   if (typeof window === "undefined") return;
-  sessionStorage.setItem(roomKey(id), pw);
+  sessionStorage.setItem(roomKey(id), "1");
+}
+
+export function clearRoomAuthed(id: string): void {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem(roomKey(id));
 }
