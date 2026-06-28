@@ -9,7 +9,6 @@ import type { CanvasElement } from "@/lib/types";
 import type {
   InitMessage,
   OpBroadcast,
-  AckMessage,
   PresenceData,
 } from "../../server/protocol";
 
@@ -143,7 +142,7 @@ export class RealtimeStore {
   }
 
   /** Handle ack — no-op for now (op already applied optimistically). */
-  handleAck(_msg: AckMessage): void {
+  handleAck(): void {
     // Could be used for pending-state UI indicators
   }
 

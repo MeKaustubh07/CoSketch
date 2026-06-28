@@ -23,10 +23,10 @@ import {
   broadcast,
   flushAll,
   roomCount,
+  type Room,
   type Member,
 } from "./rooms.js";
 import type {
-  ServerMessage,
   ClientMessage,
   InitMessage,
   OpBroadcast,
@@ -36,7 +36,6 @@ import type {
   PresenceBroadcast,
   PresenceData,
 } from "./protocol.js";
-import { WS_CLOSE_BAD_TICKET, WS_CLOSE_ROOM_NOT_FOUND } from "./protocol.js";
 import { disconnect } from "./persistence.js";
 
 // ─── Config ───────────────────────────────────────────────────────────────
@@ -140,7 +139,11 @@ httpServer.on("upgrade", async (req: IncomingMessage, socket, head) => {
 
 // ─── Connection handler ───────────────────────────────────────────────────
 
-wss.on("connection", (ws: WebSocket, _req: IncomingMessage, room: any, name: string = "Guest") => {
+interface AliveWebSocket extends WebSocket {
+  __alive?: boolean;
+}
+
+wss.on("connection", (ws: AliveWebSocket, _req: IncomingMessage, room: Room, name: string = "Guest") => {
   const actorId = `actor-${nanoid(8)}`;
   const color = userColor(name);
 
@@ -256,20 +259,22 @@ wss.on("connection", (ws: WebSocket, _req: IncomingMessage, room: any, name: str
 // ─── Heartbeat ────────────────────────────────────────────────────────────
 
 const heartbeat = setInterval(() => {
-  wss.clients.forEach((ws) => {
-    if ((ws as any).__alive === false) {
+  wss.clients.forEach((client) => {
+    const ws = client as AliveWebSocket;
+    if (ws.__alive === false) {
       ws.terminate();
       return;
     }
-    (ws as any).__alive = false;
+    ws.__alive = false;
     ws.ping();
   });
 }, HEARTBEAT_INTERVAL_MS);
 
-wss.on("connection", (ws) => {
-  (ws as any).__alive = true;
+wss.on("connection", (client) => {
+  const ws = client as AliveWebSocket;
+  ws.__alive = true;
   ws.on("pong", () => {
-    (ws as any).__alive = true;
+    ws.__alive = true;
   });
 });
 

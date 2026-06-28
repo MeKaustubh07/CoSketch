@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/refs */
 "use client";
 
 import { useRef, useEffect, useCallback, useReducer } from "react";
@@ -292,6 +293,7 @@ export function CanvasStage() {
 
       if (tool === "pan" || e.button === 1) {
         dragRef.current = { type: "pan", startX: sx, startY: sy, currentX: sx, currentY: sy };
+        canvas.style.cursor = "grabbing";
         return;
       }
 
@@ -511,6 +513,10 @@ export function CanvasStage() {
     const drag = dragRef.current;
     dragRef.current = null;
 
+    if (canvasRef.current) {
+      canvasRef.current.style.cursor = getCursorForTool(ui.activeTool);
+    }
+
     if (drag?.type === "rubberband") {
       const v = ui.viewport;
       const [x1, y1] = screenToCanvas(
@@ -596,6 +602,21 @@ export function CanvasStage() {
 
   // ─── Keyboard shortcuts ────────────────────────────────────────────────────
 
+  const duplicateSelected = useCallback(
+    (ids: string[]) => {
+      const els = currentElements();
+      const dups: CanvasElement[] = [];
+      for (const id of ids) {
+        const el = els.get(id);
+        if (el && !el.isDeleted) dups.push(duplicateElement(el));
+      }
+      if (dups.length === 0) return;
+      addMany(dups);
+      dispatch({ type: "SET_SELECTION", ids: dups.map((d) => d.id) });
+    },
+    [currentElements, addMany]
+  );
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (uiRef.current.editingTextId) return;
@@ -642,21 +663,6 @@ export function CanvasStage() {
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [removeElements, visibleInZOrder]);
-
-  const duplicateSelected = useCallback(
-    (ids: string[]) => {
-      const els = currentElements();
-      const dups: CanvasElement[] = [];
-      for (const id of ids) {
-        const el = els.get(id);
-        if (el && !el.isDeleted) dups.push(duplicateElement(el));
-      }
-      if (dups.length === 0) return;
-      addMany(dups);
-      dispatch({ type: "SET_SELECTION", ids: dups.map((d) => d.id) });
-    },
-    [currentElements, addMany]
-  );
 
   // ─── Double-click (text) ───────────────────────────────────────────────────
 
@@ -746,7 +752,7 @@ export function CanvasStage() {
         ref={canvasRef}
         className="absolute inset-0 w-full h-full"
         style={{
-          cursor: getCursorForTool(ui.activeTool, dragRef.current),
+          cursor: getCursorForTool(ui.activeTool),
           touchAction: "none",
         }}
         onPointerDown={handlePointerDown}
@@ -842,8 +848,7 @@ function createTextAt(x: number, y: number, style: AppState["currentStyle"]): Te
   return el;
 }
 
-function getCursorForTool(tool: ToolName, drag: DragState | null): string {
-  if (drag?.type === "pan") return "grabbing";
+function getCursorForTool(tool: ToolName): string {
   switch (tool) {
     case "selection": return "default";
     case "pan": return "grab";

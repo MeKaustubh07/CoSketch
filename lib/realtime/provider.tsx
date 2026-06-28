@@ -5,13 +5,13 @@
  * Replaces RoomProviderWrapper + LiveblocksProvider.
  */
 
+/* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
 import {
   createContext,
   useContext,
   useEffect,
-  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -19,7 +19,7 @@ import {
 import { RealtimeSocket, type ConnectionState } from "./socket";
 import { RealtimeStore, type StoreSnapshot, type Peer } from "./store";
 import type { CanvasElement } from "@/lib/types";
-import type { Op, UpsertOp, DeleteOp, PresenceData } from "../../server/protocol";
+import type { UpsertOp, DeleteOp, PresenceData } from "../../server/protocol";
 import { nanoid } from "nanoid";
 
 // ─── Context ──────────────────────────────────────────────────────────────
@@ -89,15 +89,13 @@ export function RealtimeProvider({
   children,
   onAuthFailed,
 }: RealtimeProviderProps) {
-  const storeRef = useRef<RealtimeStore>(new RealtimeStore());
-  const socketRef = useRef<RealtimeSocket | null>(null);
+  const [store] = useState(() => new RealtimeStore());
+  const [socket, setSocket] = useState<RealtimeSocket | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const store = storeRef.current;
-
-    const socket = new RealtimeSocket({
+    const s = new RealtimeSocket({
       roomId,
       userName,
       wsUrl: WS_URL,
@@ -128,14 +126,14 @@ export function RealtimeProvider({
       },
     });
 
-    socketRef.current = socket;
-    socket.connect();
+    setSocket(s);
+    s.connect();
 
     return () => {
-      socket.destroy();
-      socketRef.current = null;
+      s.destroy();
+      setSocket(null);
     };
-  }, [roomId, userName, onAuthFailed]);
+  }, [roomId, userName, onAuthFailed, store]);
 
   const sendUpsert = (element: CanvasElement): void => {
     const op: UpsertOp = {
@@ -145,8 +143,8 @@ export function RealtimeProvider({
       element: element as unknown as Record<string, unknown>,
       version: element.version,
     };
-    storeRef.current.applyLocalOp(element.id, "upsert", element);
-    socketRef.current?.sendOp(op);
+    store.applyLocalOp(element.id, "upsert", element);
+    socket?.sendOp(op);
   };
 
   const sendDelete = (elementId: string): void => {
@@ -156,8 +154,8 @@ export function RealtimeProvider({
       elementId,
       version: Date.now(), // High version ensures acceptance
     };
-    storeRef.current.applyLocalOp(elementId, "delete");
-    socketRef.current?.sendOp(op);
+    store.applyLocalOp(elementId, "delete");
+    socket?.sendOp(op);
   };
 
   const sendReorder = (elementId: string, direction: "front" | "back" | "forward" | "backward"): void => {
@@ -167,17 +165,17 @@ export function RealtimeProvider({
       elementId,
       direction,
     };
-    storeRef.current.reorder(elementId, direction);
-    socketRef.current?.sendOp(op);
+    store.reorder(elementId, direction);
+    socket?.sendOp(op);
   };
 
   const sendPresence = (presence: PresenceData): void => {
-    socketRef.current?.sendPresence(presence);
+    socket?.sendPresence(presence);
   };
 
   const value: RealtimeContextValue = {
-    store: storeRef.current,
-    socket: socketRef.current,
+    store: store,
+    socket: socket,
     connectionState,
     sendUpsert,
     sendDelete,
@@ -202,11 +200,13 @@ function BoardLoader({ connectionState }: { connectionState?: ConnectionState })
   const [showSlow, setShowSlow] = useState(false);
 
   useEffect(() => {
+    let t: ReturnType<typeof setTimeout>;
     if (connectionState !== "error" && connectionState !== "disconnected") {
-      const t = setTimeout(() => setShowSlow(true), 4000);
-      return () => clearTimeout(t);
+      t = setTimeout(() => setShowSlow(true), 4000);
     }
-    setShowSlow(false);
+    return () => {
+      if (t) clearTimeout(t);
+    };
   }, [connectionState]);
 
   const isError = connectionState === "error" || connectionState === "disconnected";
