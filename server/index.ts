@@ -40,7 +40,7 @@ import { disconnect } from "./persistence.js";
 
 // ─── Config ───────────────────────────────────────────────────────────────
 
-const PORT = parseInt(process.env.WS_PORT || "8080", 10);
+const PORT = parseInt(process.env.PORT || process.env.WS_PORT || "8080", 10);
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const MAX_MESSAGE_SIZE = 512 * 1024; // 512 KB
 const OP_RATE_LIMIT = 60; // max ops per second per socket
