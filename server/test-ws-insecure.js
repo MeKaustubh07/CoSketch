@@ -1,0 +1,14 @@
+const { WebSocket } = require('ws');
+const { createHmac } = require('crypto');
+const secret = "dev-insecure-ws-ticket-secret";
+const roomId = "testroom";
+const exp = Date.now() + 60000;
+const payload = `${roomId}.${exp}`;
+const sig = createHmac("sha256", secret).update(payload).digest("hex");
+const ticket = `${payload}.${sig}`;
+const url = `wss://cosketch-production.up.railway.app/?room=${roomId}&ticket=${ticket}&name=Test`;
+console.log("Connecting with insecure secret:", url);
+const ws = new WebSocket(url);
+ws.on('open', () => { console.log("Connected successfully!"); ws.close(); });
+ws.on('error', (err) => { console.error("Error:", err.message); });
+ws.on('unexpected-response', (req, res) => { console.error("Unexpected response:", res.statusCode); });

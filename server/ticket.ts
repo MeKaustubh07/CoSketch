@@ -9,7 +9,7 @@
 
 import { createHmac, timingSafeEqual } from "crypto";
 
-const SECRET = process.env.WS_TICKET_SECRET || "dev-insecure-ws-ticket-secret";
+const SECRET = (process.env.WS_TICKET_SECRET || "dev-insecure-ws-ticket-secret").trim();
 
 /** Verify a ticket string. Returns the roomId on success, null on failure. */
 export function verifyTicket(ticket: string, expectedRoom: string): boolean {

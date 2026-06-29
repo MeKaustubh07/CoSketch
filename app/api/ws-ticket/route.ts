@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHmac } from "crypto";
 import { verifyRoomToken, roomCookieName } from "@/lib/roomToken";
 
-const WS_TICKET_SECRET = process.env.WS_TICKET_SECRET || "dev-insecure-ws-ticket-secret";
+const WS_TICKET_SECRET = (process.env.WS_TICKET_SECRET || "dev-insecure-ws-ticket-secret").trim();
 const TICKET_TTL_MS = 60_000; // 60 seconds
 
 /** Mint a short-lived HMAC ticket for the WS handshake. */
