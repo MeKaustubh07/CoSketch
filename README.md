@@ -7,7 +7,7 @@
 Sketch shapes, arrows, freehand and text on an infinite canvas, then share a private,
 password-protected room and draw together live with cursors and presence.
 
-Next.js 16 · React 19 · Liveblocks · rough.js · Prisma · Tailwind CSS 4
+Next.js 16 · React 19 · WebSockets · rough.js · Prisma · Tailwind CSS 4
 
 </div>
 
@@ -19,8 +19,8 @@ Next.js 16 · React 19 · Liveblocks · rough.js · Prisma · Tailwind CSS 4
 - **Hand-drawn rendering** via [rough.js](https://roughjs.com) — rectangles, diamonds, ellipses, arrows, lines, freehand draw, and text.
 - **Full editing** — select, multi-select (rubber-band), move, resize (with font scaling for text), rotate, duplicate, delete, and layer ordering.
 - **Excalidraw-style style panel** — stroke/background colors, fill style, stroke width & style, sloppiness, edges, opacity, font family & size, arrowheads.
-- **Real-time collaboration** — shared canvas, live cursors with names, and an avatar stack, powered by [Liveblocks](https://liveblocks.io).
-- **Auto-persistence** — canvas content lives in Liveblocks Storage, so a refresh keeps everything (no manual save).
+- **Real-time collaboration** — shared canvas, live cursors with names, and an avatar stack, powered by a custom **WebSocket server**.
+- **Auto-persistence** — canvas content is debounced and saved to PostgreSQL via Prisma, so a refresh keeps everything (no manual save).
 - **Private rooms** — each room has a password; access is enforced server-side with an httpOnly, signed cookie (a share link alone can't bypass it).
 - **Undo / redo**, **keyboard shortcuts**, and **PNG export**.
 - **No sign-up** — pick a display name per session and go.
@@ -31,23 +31,23 @@ Next.js 16 · React 19 · Liveblocks · rough.js · Prisma · Tailwind CSS 4
 |------|--------|
 | Framework | Next.js 16 (App Router, Turbopack) |
 | UI | React 19, Tailwind CSS 4 |
-| Realtime / sync | Liveblocks (`@liveblocks/react`, `@liveblocks/node`) |
+| Realtime / sync | Custom WebSocket Server (Node.js/ws) |
 | Canvas rendering | rough.js + HTML Canvas 2D |
-| Database | PostgreSQL via Prisma (room metadata only) |
+| Database | PostgreSQL via Prisma (room metadata & canvas elements) |
 | Language | TypeScript |
 
 ## 🏗️ Architecture
 
-**Local-first canvas, synced through Liveblocks.**
+**Local-first canvas, synced through a custom WebSocket Server.**
 
 - The drawing engine ([`lib/scene.ts`](lib/scene.ts), [`lib/rough-renderer.ts`](lib/rough-renderer.ts)) is pure and framework-agnostic: element creation, hit-testing, resize/rotate math, and a cached rough.js renderer drawn on a `requestAnimationFrame` loop. Shapes are drawn in local coordinates and positioned with `ctx.translate`, so **moving an element never regenerates its rough path**.
-- [`CanvasStage.tsx`](components/canvas/CanvasStage.tsx) keeps per-user UI state (tool, viewport, selection) in local React state, while **shared scene state lives in Liveblocks Storage** (`shapes: LiveMap`, `elementOrder: LiveList`). Reads use `useStorage`; writes use `useMutation`; undo/redo uses the room history.
-- During a drag, edits are applied to an in-memory **override map** (instant local render) and flushed to Storage on a throttle, so collaborators see smooth updates without per-frame network spam.
-- **Presence** (`useUpdateMyPresence` / `useOthers`) broadcasts each user's cursor (in canvas coordinates) and name for live cursors and avatars.
+- [`CanvasStage.tsx`](components/canvas/CanvasStage.tsx) keeps per-user UI state (tool, viewport, selection) in local React state, while **shared scene state lives in a custom RealtimeStore** (`shapes`, `elementOrder`). Reads use React's `useSyncExternalStore`; writes are broadcasted over a WebSocket using a Last-Writer-Wins (LWW) CRDT algorithm.
+- During a drag, edits are applied to an in-memory **override map** (instant local render) and flushed to the network on a throttle, so collaborators see smooth updates without per-frame network spam.
+- **Presence** broadcasts each user's cursor (in canvas coordinates) and name for live cursors and avatars.
 
 ### Real-time / WebSockets
 
-There is **no hand-written WebSocket code**. Liveblocks manages the socket connection, CRDT conflict resolution, presence, and reconnection. The app only declares the data schema ([`liveblocks.config.ts`](liveblocks.config.ts)), wires the provider ([`RoomProviderWrapper.tsx`](components/collab/RoomProviderWrapper.tsx)), and authorizes connections ([`api/liveblocks-auth`](app/api/liveblocks-auth/route.ts)).
+The custom standalone Node.js WebSocket server ([`server/index.ts`](server/index.ts)) handles connections, routes messages, and resolves conflicts using monotonic sequencing. It also persists dirty canvas state to Postgres in the background so you never lose your drawings. The frontend connects to it using a secure HMAC ticket minted by a Next.js API route.
 
 ### Access & privacy
 
@@ -65,17 +65,18 @@ app/
   api/
     boards/route.ts            # Create room (hash password, set cookie)
     boards/[boardId]/join/     # Verify password, set access cookie
-    liveblocks-auth/route.ts   # Authorize realtime via the access cookie
+    ws-ticket/route.ts         # Mint a secure HMAC ticket for the WebSocket server
 components/
   canvas/                      # Toolbar, StylePanel, ZoomControls, TextEditor, ExportMenu, CanvasStage
-  collab/                      # RoomProviderWrapper, Cursors/AvatarStack, SharePanel
+  collab/                      # RealtimeProvider, Cursors/AvatarStack, SharePanel
 lib/
   scene.ts, rough-renderer.ts  # Drawing engine + renderer
   types.ts, text.ts, export.ts # Element types, text measurement, PNG export
   password.ts, roomToken.ts    # scrypt hashing + signed access cookie
   prisma.ts, user.ts           # DB client + session helpers
+  realtime/                    # Custom WebSocket client, LWW store, and hooks
 prisma/schema.prisma           # Board (room) model
-liveblocks.config.ts           # Liveblocks Storage / Presence types
+server/                        # Standalone WebSocket server (Node.js/ws)
 ```
 
 ## 🚀 Getting started
@@ -84,7 +85,6 @@ liveblocks.config.ts           # Liveblocks Storage / Presence types
 
 - Node.js 18+
 - A PostgreSQL database (e.g. [Neon](https://neon.tech) or [Supabase](https://supabase.com))
-- A free [Liveblocks](https://liveblocks.io) account
 
 ### 1. Install
 
@@ -99,14 +99,16 @@ npm install
 Create `.env` (see `.env.example`):
 
 ```bash
-# PostgreSQL — stores room metadata (id, name, hashed password)
+# PostgreSQL — stores room metadata (id, name, hashed password) and canvas elements
 DATABASE_URL="postgresql://user:password@host:5432/cosketch?sslmode=require"
 
-# Liveblocks server secret (real-time). From https://liveblocks.io/dashboard/apikeys
-# Without a valid key the board will not load.
-LIVEBLOCKS_SECRET_KEY="sk_dev_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+# Shared HMAC secret for WS ticket auth (Next.js mints, WS server verifies)
+WS_TICKET_SECRET="generate-a-long-random-string"
 
-# Secret used to sign room-access cookies (any long random string)
+# Public URL of the WebSocket server (used by the client)
+NEXT_PUBLIC_WS_URL="ws://localhost:8080"
+
+# Secret used to sign room-access cookies
 NEXTAUTH_SECRET="generate-a-long-random-string"
 ```
 
@@ -121,9 +123,10 @@ npx prisma db push
 
 ```bash
 npm run dev
+npm run dev:ws
 ```
 
-Open [http://localhost:3000](http://localhost:3000), pick a name, set a room password, and start sketching. Share the **Room ID + password** (or the link + password) to collaborate.
+Open [http://localhost:3000](http://localhost:3000) (Next.js frontend), pick a name, set a room password, and start sketching. The frontend will connect to the `dev:ws` server running on port `8080`.
 
 ## 🛠️ Scripts
 
@@ -142,7 +145,6 @@ Open [http://localhost:3000](http://localhost:3000), pick a name, set a room pas
 
 - The display name is **per-session** (sessionStorage), not an account.
 - Not yet implemented: groups, copy/paste, image tool, and arrow-to-shape binding.
-- Room metadata is the only thing in Postgres — all canvas content lives in Liveblocks.
 
 ## 📄 License
 
